@@ -342,10 +342,17 @@ Cpu_step :: proc(cpu: ^Cpu, bus: ^Bus) -> (cycles: int, ok: bool) {
 		cpu.pc = u16(opcode & 0x38)
 		cycles = 4
 		ok = true
-	case 0xC1:
-		// POP BC
-		cpu_set_r16(cpu, .BC, cpu_pop_u16(cpu, bus))
+	case 0xC1, 0xD1, 0xE1, 0xF1:
+		// pop r16stk
+		dest := R16_stk((opcode >> 4) & 0b11)
+		cpu_set_r16stk(cpu, dest, cpu_pop_u16(cpu, bus))
 		cycles = 3
+		ok = true
+	case 0xC5, 0xD5, 0xE5, 0xF5:
+		// push r16stk
+		source := R16_stk((opcode >> 4) & 0b11)
+		cpu_push_u16(cpu, bus, cpu_get_r16stk(cpu, source))
+		cycles = 4
 		ok = true
 	case:
 		fmt.printf("Unimplemented opcode 0x%02X at 0x%04X\n", opcode, instruction_address)
@@ -537,6 +544,21 @@ cpu_get_hl :: proc(cpu: ^Cpu) -> u16 {
 	return (u16(cpu.h) << 8) | u16(cpu.l)
 }
 
+cpu_get_r16stk :: proc(cpu: ^Cpu, source: R16_stk) -> u16 {
+	switch source {
+	case .BC:
+		return cpu_get_bc(cpu)
+	case .DE:
+		return cpu_get_de(cpu)
+	case .HL:
+		return cpu_get_hl(cpu)
+	case .AF:
+		return (u16(cpu.a) << 8) | u16(cpu.f & 0xF0)
+	}
+
+	unreachable()
+}
+
 // Increments by 1, and sets flags
 cpu_inc_r8 :: proc(cpu: ^Cpu, value: u8) -> u8 {
 	result := value + 1
@@ -631,6 +653,20 @@ cpu_set_r16 :: proc(cpu: ^Cpu, dest: R16, value: u16) {
 		cpu.l = u8(value) // Cast takes the low byte
 	case .SP:
 		cpu.sp = value
+	}
+}
+
+cpu_set_r16stk :: proc(cpu: ^Cpu, dest: R16_stk, value: u16) {
+	switch dest {
+	case .BC:
+		cpu_set_r16(cpu, .BC, value)
+	case .DE:
+		cpu_set_r16(cpu, .DE, value)
+	case .HL:
+		cpu_set_r16(cpu, .HL, value)
+	case .AF:
+		cpu.a = u8(value >> 8)
+		cpu.f = u8(value) & 0xF0 // lower 4 bits must always be 0
 	}
 }
 

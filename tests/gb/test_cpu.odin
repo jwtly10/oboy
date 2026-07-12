@@ -2247,3 +2247,135 @@ test_rst_covers_all_targets_and_pushes_return_address :: proc(t: ^testing.T) {
 		testing.expect(t, cycles == 4, "Expected RST to take 4 cycles")
 	}
 }
+
+// --- POP and PUSH r16stk opcode tests ---
+
+@(test)
+test_pop_r16stk_covers_all_register_pairs :: proc(t: ^testing.T) {
+	opcodes := [4]u8{0xC1, 0xD1, 0xE1, 0xF1}
+	for opcode, index in opcodes {
+		bus := make_test_bus([]u8{opcode})
+		cpu := make_test_cpu()
+		cpu.a = 0xA5
+		cpu.b = 0xB5
+		cpu.c = 0xC5
+		cpu.d = 0xD5
+		cpu.e = 0xE5
+		cpu.f = 0xF0
+		cpu.h = 0x15
+		cpu.l = 0x25
+		cpu.sp = 0xC000
+		bus.memory[0xC000] = 0x3F
+		bus.memory[0xC001] = 0x92
+
+		cycles, ok := gb.Cpu_step(&cpu, &bus)
+
+		testing.expect(t, ok, "Expected POP r16stk to succeed")
+		testing.expect(t, cpu.pc == 0x0101, "Expected POP r16stk to advance PC by 1")
+		testing.expect(t, cpu.sp == 0xC002, "Expected POP r16stk to increment SP by 2")
+		testing.expect(t, cycles == 3, "Expected POP r16stk to take 3 cycles")
+		switch index {
+		case 0:
+			testing.expect(t, gb.cpu_get_bc(&cpu) == 0x923F, "Expected POP BC to load BC")
+			testing.expect(t, cpu.a == 0xA5 && cpu.f == 0xF0, "Expected POP BC to preserve AF")
+		case 1:
+			testing.expect(t, gb.cpu_get_de(&cpu) == 0x923F, "Expected POP DE to load DE")
+			testing.expect(t, gb.cpu_get_bc(&cpu) == 0xB5C5, "Expected POP DE to preserve BC")
+		case 2:
+			testing.expect(t, gb.cpu_get_hl(&cpu) == 0x923F, "Expected POP HL to load HL")
+			testing.expect(t, gb.cpu_get_de(&cpu) == 0xD5E5, "Expected POP HL to preserve DE")
+		case 3:
+			testing.expect(t, cpu.a == 0x92, "Expected POP AF to load A from the high byte")
+			testing.expect(
+				t,
+				cpu.f == 0x30,
+				"Expected POP AF to load flags and clear F's low nibble",
+			)
+			testing.expect(t, gb.cpu_get_hl(&cpu) == 0x1525, "Expected POP AF to preserve HL")
+		}
+	}
+}
+
+@(test)
+test_pop_r16stk_wraps_stack_pointer :: proc(t: ^testing.T) {
+	bus := make_test_bus([]u8{0xE1})
+	cpu := make_test_cpu()
+	cpu.sp = 0xFFFF
+	bus.memory[0xFFFF] = 0x34
+	bus.memory[0x0000] = 0x12
+
+	cycles, ok := gb.Cpu_step(&cpu, &bus)
+
+	testing.expect(t, ok, "Expected boundary-crossing POP HL to succeed")
+	testing.expect(
+		t,
+		gb.cpu_get_hl(&cpu) == 0x1234,
+		"Expected POP HL to read across address wraparound",
+	)
+	testing.expect(t, cpu.sp == 0x0001, "Expected POP HL to wrap SP")
+	testing.expect(t, cpu.pc == 0x0101, "Expected POP HL to advance PC by 1")
+	testing.expect(t, cycles == 3, "Expected POP HL to take 3 cycles")
+}
+
+@(test)
+test_push_r16stk_covers_all_register_pairs :: proc(t: ^testing.T) {
+	opcodes := [4]u8{0xC5, 0xD5, 0xE5, 0xF5}
+	for opcode, index in opcodes {
+		bus := make_test_bus([]u8{opcode})
+		cpu := make_test_cpu()
+		cpu.a = 0x89
+		cpu.f = 0xB0
+		gb.cpu_set_r16(&cpu, .BC, 0x1234)
+		gb.cpu_set_r16(&cpu, .DE, 0x5678)
+		gb.cpu_set_r16(&cpu, .HL, 0x9ABC)
+		cpu.sp = 0xC002
+
+		cycles, ok := gb.Cpu_step(&cpu, &bus)
+
+		expected_values := [4]u16{0x1234, 0x5678, 0x9ABC, 0x89B0}
+		expected := expected_values[index]
+		testing.expect(t, ok, "Expected PUSH r16stk to succeed")
+		testing.expect(t, cpu.sp == 0xC000, "Expected PUSH r16stk to decrement SP by 2")
+		testing.expect(
+			t,
+			bus.memory[0xC000] == u8(expected),
+			"Expected PUSH r16stk to store the low byte at SP",
+		)
+		testing.expect(
+			t,
+			bus.memory[0xC001] == u8(expected >> 8),
+			"Expected PUSH r16stk to store the high byte above SP",
+		)
+		testing.expect(t, cpu.pc == 0x0101, "Expected PUSH r16stk to advance PC by 1")
+		testing.expect(t, cycles == 4, "Expected PUSH r16stk to take 4 cycles")
+		testing.expect(t, cpu.a == 0x89 && cpu.f == 0xB0, "Expected PUSH r16stk to preserve AF")
+		testing.expect(t, gb.cpu_get_bc(&cpu) == 0x1234, "Expected PUSH r16stk to preserve BC")
+		testing.expect(t, gb.cpu_get_de(&cpu) == 0x5678, "Expected PUSH r16stk to preserve DE")
+		testing.expect(t, gb.cpu_get_hl(&cpu) == 0x9ABC, "Expected PUSH r16stk to preserve HL")
+	}
+}
+
+@(test)
+test_push_r16stk_wraps_stack_pointer :: proc(t: ^testing.T) {
+	bus := make_test_bus([]u8{0xC5})
+	cpu := make_test_cpu()
+	gb.cpu_set_r16(&cpu, .BC, 0x1234)
+	cpu.sp = 0x0001
+
+	cycles, ok := gb.Cpu_step(&cpu, &bus)
+
+	testing.expect(t, ok, "Expected boundary-crossing PUSH BC to succeed")
+	testing.expect(t, cpu.sp == 0xFFFF, "Expected PUSH BC to wrap SP")
+	testing.expect(
+		t,
+		bus.memory[0xFFFF] == 0x34,
+		"Expected PUSH BC to store the low byte at wrapped SP",
+	)
+	testing.expect(
+		t,
+		bus.memory[0x0000] == 0x12,
+		"Expected PUSH BC to store the high byte above wrapped SP",
+	)
+	testing.expect(t, cpu.pc == 0x0101, "Expected PUSH BC to advance PC by 1")
+	testing.expect(t, cycles == 4, "Expected PUSH BC to take 4 cycles")
+}
