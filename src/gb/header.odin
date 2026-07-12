@@ -1,4 +1,4 @@
-package main
+package gb
 
 import "core:encoding/endian"
 import "core:fmt"
@@ -18,7 +18,7 @@ ROM_Header :: struct {
 }
 
 // An implementation of header spec https://gbdev.gg8.se/wiki/articles/The_Cartridge_Header
-parse_rom_header :: proc(rom: []u8) -> (ROM_Header, bool) {
+Parse_rom_header :: proc(rom: []u8) -> (ROM_Header, bool) {
 	HEADER_END := 0x014F
 	TITLE_START := 0x0134
 	TITLE_END := 0x0144
@@ -36,7 +36,7 @@ parse_rom_header :: proc(rom: []u8) -> (ROM_Header, bool) {
 	ROM_VERSION := 0x014C
 	HEADER_CHECK := 0x014D
 	GLOBAL_CHECK_START := 0x014E
-	GLOBAL_CHECK_END := 0x014F
+	// GLOBAL_CHECK_END := 0x014F
 
 	if (len(rom) <= HEADER_END) {
 		fmt.println("ROM is too small to contain a valid cartridge header")
@@ -79,7 +79,7 @@ parse_rom_header :: proc(rom: []u8) -> (ROM_Header, bool) {
 	return header, true
 }
 
-print_rom_header :: proc(header: ^ROM_Header) {
+Print_rom_header :: proc(header: ^ROM_Header) {
 	fmt.println("=========ROM Header Start=========")
 
 	fmt.printf("TITLE: %s\n", header.title)

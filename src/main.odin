@@ -2,6 +2,7 @@ package main
 
 import "core:fmt"
 import "core:os"
+import "gb"
 
 main :: proc() {
 	file_path := "roms/Pokemon Red.gb"
@@ -13,17 +14,17 @@ main :: proc() {
 	defer delete(rom, context.allocator)
 
 
-	header, ok := parse_rom_header(rom)
+	header, ok := gb.Parse_rom_header(rom)
 	if !ok {
 		fmt.println("Header parsing failed")
 		return
 	}
-	print_rom_header(&header)
+	gb.Print_rom_header(&header)
 
-	bus := bus_init(rom)
-	cpu := cpu_init()
+	bus := gb.Bus_init(rom)
+	cpu := gb.Cpu_init()
 
 	for i := 0; i < 3; i += 1 {
-		cpu_step(&cpu, &bus)
+		gb.Cpu_step(&cpu, &bus)
 	}
 }

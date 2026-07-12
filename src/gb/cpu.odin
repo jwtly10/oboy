@@ -1,8 +1,8 @@
-package main
+package gb
 
 import "core:fmt"
 
-CPU :: struct {
+Cpu :: struct {
 	a:  u8,
 	b:  u8,
 	c:  u8,
@@ -15,11 +15,11 @@ CPU :: struct {
 	pc: u16,
 }
 
-cpu_init :: proc() -> CPU {
-	return CPU{pc = 0x0100}
+Cpu_init :: proc() -> Cpu {
+	return Cpu{pc = 0x0100}
 }
 
-cpu_step :: proc(cpu: ^CPU, bus: ^Bus) -> bool {
+Cpu_step :: proc(cpu: ^Cpu, bus: ^Bus) -> (int, bool) {
 	instruction_address := cpu.pc
 	opcode := bus_read_byte(bus, instruction_address)
 
@@ -28,9 +28,9 @@ cpu_step :: proc(cpu: ^CPU, bus: ^Bus) -> bool {
 	switch opcode {
 	case 0x00:
 		fmt.println("NOP")
-		return true
+		return 1, true
 	case:
 		fmt.printf("Unimplemented opcode 0x%02X at 0x%04X\n", opcode, instruction_address)
-		return false
+		return 0, false
 	}
 }

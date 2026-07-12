@@ -1,11 +1,11 @@
-package main
+package gb
 
 Bus :: struct {
 	// 16-bit address bus
 	memory: [0x10000]u8,
 }
 
-bus_init :: proc(rom: []u8) -> Bus {
+Bus_init :: proc(rom: []u8) -> Bus {
 	bus: Bus
 
 	// Init 32kib of rom data to memory
