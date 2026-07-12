@@ -24,6 +24,7 @@ Cpu :: struct {
 	stopped: bool,
 	halted:  bool,
 	trace:   bool,
+	ime:     bool,
 }
 
 R8 :: enum {
@@ -86,6 +87,21 @@ Cpu_step :: proc(cpu: ^Cpu, bus: ^Bus) -> (cycles: int, ok: bool) {
 		address := cpu_fetch_u16(cpu, bus)
 		cpu.pc = address
 		cycles = 4
+		ok = true
+	case 0xC2, 0xCA, 0xD2, 0xDA:
+		// jp cond, imm16
+		address := cpu_fetch_u16(cpu, bus)
+		if cpu_condition_met(cpu, (opcode >> 3) & 0b11) {
+			cpu.pc = address
+			cycles = 4
+		} else {
+			cycles = 3
+		}
+		ok = true
+	case 0xE9:
+		// jp hl
+		cpu.pc = cpu_get_hl(cpu)
+		cycles = 1
 		ok = true
 	case 0x01, 0x11, 0x21, 0x31:
 		// ld r16, imm16
@@ -220,20 +236,7 @@ Cpu_step :: proc(cpu: ^Cpu, bus: ^Bus) -> (cycles: int, ok: bool) {
 		condition := (opcode >> 3) & 0b11
 		offset := i8(cpu_fetch_u8(cpu, bus))
 
-		jump := false
-
-		switch condition {
-		case 0:
-			jump = (cpu.f & FLAG_Z) == 0 // NZ
-		case 1:
-			jump = (cpu.f & FLAG_Z) != 0 // Z
-		case 2:
-			jump = (cpu.f & FLAG_C) == 0 // NC
-		case 3:
-			jump = (cpu.f & FLAG_C) != 0 // C
-		}
-
-		if jump {
+		if cpu_condition_met(cpu, condition) {
 			cpu.pc = u16(i32(cpu.pc) + i32(offset))
 			cycles = 3
 		} else {
@@ -293,6 +296,56 @@ Cpu_step :: proc(cpu: ^Cpu, bus: ^Bus) -> (cycles: int, ok: bool) {
 		cpu_execute_alu(cpu, operation, value)
 
 		cycles = 2
+		ok = true
+	case 0xC0, 0xC8, 0xD0, 0xD8:
+		// ret cond
+		if cpu_condition_met(cpu, (opcode >> 3) & 0b11) {
+			cpu.pc = cpu_pop_u16(cpu, bus)
+			cycles = 5
+		} else {
+			cycles = 2
+		}
+
+		ok = true
+	case 0xC9:
+		// ret
+		cpu.pc = cpu_pop_u16(cpu, bus)
+		cycles = 4
+		ok = true
+	case 0xD9:
+		// reti
+		cpu.pc = cpu_pop_u16(cpu, bus)
+		cpu.ime = true
+		cycles = 4
+		ok = true
+	case 0xC4, 0xCC, 0xD4, 0xDC:
+		// call cond, imm16
+		address := cpu_fetch_u16(cpu, bus)
+		if cpu_condition_met(cpu, (opcode >> 3) & 0b11) {
+			cpu_push_u16(cpu, bus, cpu.pc)
+			cpu.pc = address
+			cycles = 6
+		} else {
+			cycles = 3
+		}
+		ok = true
+	case 0xCD:
+		// call imm16
+		address := cpu_fetch_u16(cpu, bus)
+		cpu_push_u16(cpu, bus, cpu.pc)
+		cpu.pc = address
+		cycles = 6
+		ok = true
+	case 0xC7, 0xCF, 0xD7, 0xDF, 0xE7, 0xEF, 0xF7, 0xFF:
+		// rst tgt3
+		cpu_push_u16(cpu, bus, cpu.pc)
+		cpu.pc = u16(opcode & 0x38)
+		cycles = 4
+		ok = true
+	case 0xC1:
+		// POP BC
+		cpu_set_r16(cpu, .BC, cpu_pop_u16(cpu, bus))
+		cycles = 3
 		ok = true
 	case:
 		fmt.printf("Unimplemented opcode 0x%02X at 0x%04X\n", opcode, instruction_address)
@@ -722,4 +775,41 @@ cpu_cp_a :: proc(cpu: ^Cpu, value: u8) {
 	cpu_set_flag(cpu, FLAG_Z, a == value)
 	cpu_set_flag(cpu, FLAG_H, (a & 0x0F) < (value & 0x0F))
 	cpu_set_flag(cpu, FLAG_C, a < value)
+}
+
+// The contents of the address specified by the stack pointer SP are loaded in the lower-order byte of PC,
+// and the contents of SP are incremented by 1. The contents of the address specified by the new SP value
+// are then loaded in the higher-order byte of PC, and the contents of SP are incremented by 1 again.
+// (The value of SP is 2 larger than before instruction execution.) The next instruction is fetched from
+// the address specified by the content of PC (as usual).
+cpu_pop_u16 :: proc(cpu: ^Cpu, bus: ^Bus) -> u16 {
+	low := u16(bus_read_byte(bus, cpu.sp))
+	cpu.sp += 1
+
+	high := u16(bus_read_byte(bus, cpu.sp))
+	cpu.sp += 1
+
+	return (high << 8) | low
+}
+
+cpu_push_u16 :: proc(cpu: ^Cpu, bus: ^Bus, value: u16) {
+	cpu.sp -= 1
+	bus_write_byte(bus, cpu.sp, u8(value >> 8))
+	cpu.sp -= 1
+	bus_write_byte(bus, cpu.sp, u8(value))
+}
+
+cpu_condition_met :: proc(cpu: ^Cpu, condition: u8) -> bool {
+	switch condition {
+	case 0:
+		return (cpu.f & FLAG_Z) == 0 // NZ
+	case 1:
+		return (cpu.f & FLAG_Z) != 0 // Z
+	case 2:
+		return (cpu.f & FLAG_C) == 0 // NC
+	case 3:
+		return (cpu.f & FLAG_C) != 0 // C
+	}
+
+	unreachable()
 }

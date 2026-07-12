@@ -2046,3 +2046,204 @@ test_cp_a_imm8_equal_sets_zero_and_subtract :: proc(t: ^testing.T) {
 	testing.expect(t, cpu.a == 0x42, "Expected CP to leave A unchanged")
 	testing.expect(t, cpu.f == 0xC0, "Expected Z=1, N=1, H=0, C=0")
 }
+
+// --- control flow opcode tests ---
+
+expect_condition :: proc(t: ^testing.T, opcode, flags: u8, taken: bool, kind: u8) {
+	bus := make_test_bus([]u8{opcode, 0x34, 0x12})
+	cpu := make_test_cpu()
+	cpu.f = flags
+	cpu.sp = 0xC100
+	bus.memory[0xC100] = 0x78
+	bus.memory[0xC101] = 0x56
+
+	cycles, ok := gb.Cpu_step(&cpu, &bus)
+
+	testing.expect(t, ok, "Expected conditional control-flow instruction to succeed")
+	testing.expect(t, cpu.f == flags, "Expected conditional control flow to preserve flags")
+	switch kind {
+	case 0:
+		// RET
+		expected_pc := u16(0x0101)
+		expected_sp := u16(0xC100)
+		expected_cycles := 2
+		if taken {
+			expected_pc = 0x5678
+			expected_sp = 0xC102
+			expected_cycles = 5
+		}
+		testing.expect(
+			t,
+			cpu.pc == expected_pc,
+			"Expected conditional RET to select the correct PC",
+		)
+		testing.expect(t, cpu.sp == expected_sp, "Expected conditional RET to pop only when taken")
+		testing.expect(
+			t,
+			cycles == expected_cycles,
+			"Expected conditional RET timing to depend on the branch",
+		)
+	case 1:
+		// JP
+		expected_pc := u16(0x0103)
+		expected_cycles := 3
+		if taken {
+			expected_pc = 0x1234
+			expected_cycles = 4
+		}
+		testing.expect(
+			t,
+			cpu.pc == expected_pc,
+			"Expected conditional JP to select the correct PC",
+		)
+		testing.expect(t, cpu.sp == 0xC100, "Expected conditional JP to preserve SP")
+		testing.expect(
+			t,
+			cycles == expected_cycles,
+			"Expected conditional JP timing to depend on the branch",
+		)
+	case 2:
+		// CALL
+		expected_pc := u16(0x0103)
+		expected_sp := u16(0xC100)
+		expected_cycles := 3
+		if taken {
+			expected_pc = 0x1234
+			expected_sp = 0xC0FE
+			expected_cycles = 6
+			testing.expect(
+				t,
+				bus.memory[0xC0FE] == 0x03,
+				"Expected CALL to push the return address low byte",
+			)
+			testing.expect(
+				t,
+				bus.memory[0xC0FF] == 0x01,
+				"Expected CALL to push the return address high byte",
+			)
+		}
+		testing.expect(
+			t,
+			cpu.pc == expected_pc,
+			"Expected conditional CALL to select the correct PC",
+		)
+		testing.expect(
+			t,
+			cpu.sp == expected_sp,
+			"Expected conditional CALL to push only when taken",
+		)
+		testing.expect(
+			t,
+			cycles == expected_cycles,
+			"Expected conditional CALL timing to depend on the branch",
+		)
+	}
+}
+
+@(test)
+test_conditional_ret_jp_and_call_cover_all_conditions :: proc(t: ^testing.T) {
+	for kind: u8 = 0; kind < 3; kind += 1 {
+		base := u8(0xC0)
+		if kind == 1 {
+			base = 0xC2
+		} else if kind == 2 {
+			base = 0xC4
+		}
+		expect_condition(t, base, 0x00, true, kind) // NZ
+		expect_condition(t, base, 0x80, false, kind)
+		expect_condition(t, base + 0x08, 0x80, true, kind) // Z
+		expect_condition(t, base + 0x08, 0x00, false, kind)
+		expect_condition(t, base + 0x10, 0x00, true, kind) // NC
+		expect_condition(t, base + 0x10, 0x10, false, kind)
+		expect_condition(t, base + 0x18, 0x10, true, kind) // C
+		expect_condition(t, base + 0x18, 0x00, false, kind)
+	}
+}
+
+@(test)
+test_ret_and_reti_pop_pc_and_reti_enables_interrupts :: proc(t: ^testing.T) {
+	opcodes := [2]u8{0xC9, 0xD9}
+	for opcode in opcodes {
+		bus := make_test_bus([]u8{opcode})
+		cpu := make_test_cpu()
+		cpu.sp = 0xFFFF
+		cpu.f = 0xB0
+		cpu.ime = false
+		bus.memory[0xFFFF] = 0xCD
+		bus.memory[0x0000] = 0xAB
+
+		cycles, ok := gb.Cpu_step(&cpu, &bus)
+
+		testing.expect(t, ok, "Expected RET/RETI to succeed")
+		testing.expect(t, cpu.pc == 0xABCD, "Expected RET/RETI to pop a little-endian address")
+		testing.expect(t, cpu.sp == 0x0001, "Expected RET/RETI stack pop to wrap SP")
+		testing.expect(t, cpu.f == 0xB0, "Expected RET/RETI to preserve flags")
+		testing.expect(t, cycles == 4, "Expected RET/RETI to take 4 cycles")
+		testing.expect(t, cpu.ime == (opcode == 0xD9), "Expected only RETI to enable interrupts")
+	}
+}
+
+@(test)
+test_jp_hl_jumps_without_changing_state :: proc(t: ^testing.T) {
+	bus := make_test_bus([]u8{0xE9})
+	cpu := make_test_cpu()
+	gb.cpu_set_r16(&cpu, .HL, 0xBEEF)
+	cpu.sp = 0xCAFE
+	cpu.f = 0xF0
+
+	cycles, ok := gb.Cpu_step(&cpu, &bus)
+
+	testing.expect(t, ok, "Expected JP HL to succeed")
+	testing.expect(t, cpu.pc == 0xBEEF, "Expected JP HL to load PC from HL")
+	testing.expect(t, gb.cpu_get_hl(&cpu) == 0xBEEF, "Expected JP HL to preserve HL")
+	testing.expect(t, cpu.sp == 0xCAFE, "Expected JP HL to preserve SP")
+	testing.expect(t, cpu.f == 0xF0, "Expected JP HL to preserve flags")
+	testing.expect(t, cycles == 1, "Expected JP HL to take 1 cycle")
+}
+
+@(test)
+test_call_pushes_return_address_and_jumps :: proc(t: ^testing.T) {
+	bus := make_test_bus([]u8{0xCD, 0xEF, 0xBE})
+	cpu := make_test_cpu()
+	cpu.sp = 0x0001
+	cpu.f = 0xA0
+
+	cycles, ok := gb.Cpu_step(&cpu, &bus)
+
+	testing.expect(t, ok, "Expected CALL to succeed")
+	testing.expect(t, cpu.pc == 0xBEEF, "Expected CALL to jump to its immediate address")
+	testing.expect(t, cpu.sp == 0xFFFF, "Expected CALL stack push to wrap SP")
+	testing.expect(
+		t,
+		bus.memory[0xFFFF] == 0x03,
+		"Expected CALL to store the return low byte at SP",
+	)
+	testing.expect(
+		t,
+		bus.memory[0x0000] == 0x01,
+		"Expected CALL to store the return high byte above SP",
+	)
+	testing.expect(t, cpu.f == 0xA0, "Expected CALL to preserve flags")
+	testing.expect(t, cycles == 6, "Expected CALL to take 6 cycles")
+}
+
+@(test)
+test_rst_covers_all_targets_and_pushes_return_address :: proc(t: ^testing.T) {
+	for index: u8 = 0; index < 8; index += 1 {
+		opcode := 0xC7 + index * 8
+		bus := make_test_bus([]u8{opcode})
+		cpu := make_test_cpu()
+		cpu.sp = 0xD000
+		cpu.f = 0x70
+
+		cycles, ok := gb.Cpu_step(&cpu, &bus)
+
+		testing.expect(t, ok, "Expected RST to succeed")
+		testing.expect(t, cpu.pc == u16(index * 8), "Expected RST to jump to its encoded vector")
+		testing.expect(t, cpu.sp == 0xCFFE, "Expected RST to decrement SP by 2")
+		testing.expect(t, bus.memory[0xCFFE] == 0x01, "Expected RST to push the return low byte")
+		testing.expect(t, bus.memory[0xCFFF] == 0x01, "Expected RST to push the return high byte")
+		testing.expect(t, cpu.f == 0x70, "Expected RST to preserve flags")
+		testing.expect(t, cycles == 4, "Expected RST to take 4 cycles")
+	}
+}
