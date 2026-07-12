@@ -25,6 +25,9 @@ main :: proc() {
 	cpu := gb.Cpu_init()
 
 	for i := 0; i < 3; i += 1 {
-		gb.Cpu_step(&cpu, &bus)
+		_, ok := gb.Cpu_step(&cpu, &bus)
+        if !ok {
+            break;
+        }
 	}
 }
