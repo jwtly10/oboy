@@ -1140,3 +1140,117 @@ test_dec_r8_borrows_from_bit_four_and_clears_stale_zero :: proc(t: ^testing.T) {
 test_dec_r8_clears_stale_half_carry_and_lower_flag_nibble :: proc(t: ^testing.T) {
 	expect_dec_r8(t, 0x05, .B, 0x02, 0x01, 0xAF, 0x40)
 }
+
+// --- ld r8, imm8 opcode tests ---
+
+expect_ld_r8_imm8 :: proc(t: ^testing.T, opcode: u8, reg: gb.R8, value: u8) {
+	bus := make_test_bus([]u8{opcode, value})
+	cpu := make_test_cpu()
+	cpu.a = 0xA1
+	cpu.b = 0xB2
+	cpu.c = 0xC3
+	cpu.d = 0xD4
+	cpu.e = 0xE5
+	cpu.h = 0xC1
+	cpu.l = 0x20
+	cpu.sp = 0xFEDC
+	cpu.f = 0xB0
+	gb.bus_write_byte(&bus, 0xC120, 0x6F)
+
+	cycles, ok := gb.Cpu_step(&cpu, &bus)
+
+	testing.expect(t, ok, "Expected LD r8, imm8 opcode to succeed")
+	testing.expect(
+		t,
+		get_r8_operand(&cpu, &bus, reg) == value,
+		"Expected LD r8, imm8 to load its destination",
+	)
+	testing.expect(t, cpu.f == 0xB0, "Expected LD r8, imm8 to leave flags unchanged")
+	testing.expect(t, cpu.pc == 0x0102, "Expected LD r8, imm8 to advance PC by 2")
+	expected_cycles := 2
+	if reg == .HL_INDIRECT {
+		expected_cycles = 3
+	}
+	testing.expect(
+		t,
+		cycles == expected_cycles,
+		"Expected LD r8, imm8 to use the destination-specific cycle count",
+	)
+	testing.expect(t, cpu.sp == 0xFEDC, "Expected LD r8, imm8 to leave SP unchanged")
+
+	if reg != .A {
+		testing.expect(t, cpu.a == 0xA1, "Expected LD r8, imm8 to leave A unchanged")
+	}
+	if reg != .B {
+		testing.expect(t, cpu.b == 0xB2, "Expected LD r8, imm8 to leave B unchanged")
+	}
+	if reg != .C {
+		testing.expect(t, cpu.c == 0xC3, "Expected LD r8, imm8 to leave C unchanged")
+	}
+	if reg != .D {
+		testing.expect(t, cpu.d == 0xD4, "Expected LD r8, imm8 to leave D unchanged")
+	}
+	if reg != .E {
+		testing.expect(t, cpu.e == 0xE5, "Expected LD r8, imm8 to leave E unchanged")
+	}
+	if reg != .H {
+		testing.expect(t, cpu.h == 0xC1, "Expected LD r8, imm8 to leave H unchanged")
+	}
+	if reg != .L {
+		testing.expect(t, cpu.l == 0x20, "Expected LD r8, imm8 to leave L unchanged")
+	}
+	if reg != .HL_INDIRECT {
+		testing.expect(
+			t,
+			gb.bus_read_byte(&bus, 0xC120) == 0x6F,
+			"Expected register LD r8, imm8 to leave memory unchanged",
+		)
+	}
+}
+
+@(test)
+test_ld_r8_imm8_all_destinations :: proc(t: ^testing.T) {
+	expect_ld_r8_imm8(t, 0x06, .B, 0x10)
+	expect_ld_r8_imm8(t, 0x0E, .C, 0x21)
+	expect_ld_r8_imm8(t, 0x16, .D, 0x32)
+	expect_ld_r8_imm8(t, 0x1E, .E, 0x43)
+	expect_ld_r8_imm8(t, 0x26, .H, 0x54)
+	expect_ld_r8_imm8(t, 0x2E, .L, 0x65)
+	expect_ld_r8_imm8(t, 0x36, .HL_INDIRECT, 0x76)
+	expect_ld_r8_imm8(t, 0x3E, .A, 0x87)
+}
+
+@(test)
+test_ld_r8_imm8_loads_byte_boundaries_and_preserves_clear_flags :: proc(t: ^testing.T) {
+	expect_ld_r8_imm8(t, 0x06, .B, 0x00)
+	expect_ld_r8_imm8(t, 0x3E, .A, 0xFF)
+}
+
+@(test)
+test_ld_hl_indirect_imm8_writes_at_ffff_and_pc_wraps :: proc(t: ^testing.T) {
+	bus: gb.Bus
+	bus.memory[0xFFFE] = 0x36
+	bus.memory[0xFFFF] = 0x5A
+	cpu := make_test_cpu()
+	cpu.pc = 0xFFFE
+	cpu.h = 0xFF
+	cpu.l = 0xFF
+	cpu.f = 0x10
+
+	cycles, ok := gb.Cpu_step(&cpu, &bus)
+
+	testing.expect(t, ok, "Expected LD [HL], imm8 at the end of memory to succeed")
+	testing.expect(
+		t,
+		gb.bus_read_byte(&bus, 0xFFFF) == 0x5A,
+		"Expected LD [HL], imm8 to write at address FFFF",
+	)
+	testing.expect(
+		t,
+		gb.cpu_get_hl(&cpu) == 0xFFFF,
+		"Expected LD [HL], imm8 to leave HL unchanged",
+	)
+	testing.expect(t, cpu.f == 0x10, "Expected LD [HL], imm8 to leave flags unchanged")
+	testing.expect(t, cpu.pc == 0x0000, "Expected the two-byte instruction PC to wrap to 0000")
+	testing.expect(t, cycles == 3, "Expected LD [HL], imm8 to take 3 cycles")
+}

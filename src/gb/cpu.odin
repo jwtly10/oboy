@@ -127,6 +127,17 @@ Cpu_step :: proc(cpu: ^Cpu, bus: ^Bus) -> (cycles: int, ok: bool) {
 			cycles = 3
 		}
 		ok = true
+	case 0x06, 0x16, 0x26, 0x36, 0x0E, 0x1E, 0x2E, 0x3E:
+		// ld r8, imm8
+		r_idx := R8((opcode >> 3) & 0b111)
+		value := cpu_fetch_u8(cpu, bus)
+		cpu_write_r8(cpu, bus, r_idx, value)
+
+		cycles = 2
+		if r_idx == .HL_INDIRECT {
+			cycles = 3
+		}
+		ok = true
 	case 0x0B, 0x1B, 0x2B, 0x3B:
 		// dec r16
 		dest := R16((opcode >> 4) & 0b11)
