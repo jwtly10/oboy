@@ -10,6 +10,7 @@ FLAG_C :: u8(1 << 4) // Carry flag
 
 // https://gbdev.io/pandocs/CPU_Instruction_Set.html#cpu-instruction-set
 Cpu :: struct {
+	// The r8 registers
 	a:     u8,
 	b:     u8,
 	c:     u8,
@@ -30,6 +31,13 @@ R16 :: enum {
 	SP,
 }
 
+R16_mem :: enum {
+	BC,
+	DE,
+	HLI, // HL+
+	HLD, // HL-
+}
+
 R16_stk :: enum {
 	BC,
 	DE,
@@ -47,22 +55,22 @@ Cpu_step :: proc(cpu: ^Cpu, bus: ^Bus) -> (cycles: int, ok: bool) {
 
 	switch opcode {
 	case 0x00:
-		// NOP
+		// nop
 		cycles = 1
 		ok = true
 	case 0xC3:
-		// JP a16
+		// jp imm16
 		address := cpu_fetch_u16(cpu, bus)
 		cpu.pc = address
 		cycles = 4
 		ok = true
 	case 0xFE:
-		// CP d8
-		cpu_cp(cpu, cpu_fetch_u8(cpu, bus))
+		// cp a, imm8
+		cpu_cp_a_imm8(cpu, cpu_fetch_u8(cpu, bus))
 		cycles = 2
 		ok = true
 	case 0x01, 0x11, 0x21, 0x31:
-		// LD r16, imm16
+		// ld r16, imm16
 		value := cpu_fetch_u16(cpu, bus)
 		// pulling the index of the opcode eg.
 		// ....0001 (0x01) >> 4 = ....0000 & ....0011 == 0b00 (index 0)
@@ -70,6 +78,12 @@ Cpu_step :: proc(cpu: ^Cpu, bus: ^Bus) -> (cycles: int, ok: bool) {
 		dest := R16((opcode >> 4) & 0b11)
 		cpu_set_r16(cpu, dest, value)
 		cycles = 3
+		ok = true
+	case 0x02, 0x12, 0x22, 0x32:
+		// ld [r16mem], a
+		dest := R16_mem((opcode >> 4) & 0b11)
+		cpu_ld_r16mem_a(cpu, bus, dest)
+		cycles = 2
 		ok = true
 	case:
 		fmt.printf("Unimplemented opcode 0x%02X at 0x%04X\n", opcode, instruction_address)
@@ -84,7 +98,7 @@ Cpu_step :: proc(cpu: ^Cpu, bus: ^Bus) -> (cycles: int, ok: bool) {
 	return cycles, ok
 }
 
-cpu_cp :: proc(cpu: ^Cpu, value: u8) {
+cpu_cp_a_imm8 :: proc(cpu: ^Cpu, value: u8) {
 	cpu_set_flag(cpu, FLAG_Z, cpu.a == value)
 	cpu_set_flag(cpu, FLAG_N, true)
 	cpu_set_flag(cpu, FLAG_C, cpu.a < value)
@@ -154,6 +168,24 @@ cpu_set_r16 :: proc(cpu: ^Cpu, r_idx: R16, value: u16) {
 		cpu.l = u8(value) // Cast takes the low byte
 	case .SP:
 		cpu.sp = value
+	}
+}
+
+
+cpu_ld_r16mem_a :: proc(cpu: ^Cpu, bus: ^Bus, r_idx: R16_mem) {
+	switch r_idx {
+	case .BC:
+		bus_write_byte(bus, cpu_get_bc(cpu), cpu.a)
+	case .DE:
+		bus_write_byte(bus, cpu_get_de(cpu), cpu.a)
+	case .HLI:
+		address := cpu_get_hl(cpu)
+		bus_write_byte(bus, address, cpu.a)
+		cpu_set_r16(cpu, .HL, address + 1)
+	case .HLD:
+		address := cpu_get_hl(cpu)
+		bus_write_byte(bus, address, cpu.a)
+		cpu_set_r16(cpu, .HL, address - 1)
 	}
 }
 
