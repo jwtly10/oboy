@@ -162,6 +162,46 @@ Cpu_step :: proc(cpu: ^Cpu, bus: ^Bus) -> (cycles: int, ok: bool) {
 		cpu_add_hl_r16(cpu, dest)
 		cycles = 2
 		ok = true
+	case 0x07:
+		// rlca
+		cpu_rlca(cpu)
+		cycles = 1
+		ok = true
+	case 0x0F:
+		// rrca
+		cpu_rrca(cpu)
+		cycles = 1
+		ok = true
+	case 0x17:
+		// rla
+		cpu_rla(cpu)
+		cycles = 1
+		ok = true
+	case 0x1F:
+		// rra
+		cpu_rra(cpu)
+		cycles = 1
+		ok = true
+	case 0x27:
+		// daa
+		cpu_daa(cpu)
+		cycles = 1
+		ok = true
+	case 0x2F:
+		// cpl
+		cpu_cpl(cpu)
+		cycles = 1
+		ok = true
+	case 0x37:
+		// scf
+		cpu_scf(cpu)
+		cycles = 1
+		ok = true
+	case 0x3F:
+		// ccf
+		cpu_ccf(cpu)
+		cycles = 1
+		ok = true
 	case:
 		fmt.printf("Unimplemented opcode 0x%02X at 0x%04X\n", opcode, instruction_address)
 		cycles = 0
@@ -173,6 +213,89 @@ Cpu_step :: proc(cpu: ^Cpu, bus: ^Bus) -> (cycles: int, ok: bool) {
 	}
 
 	return cycles, ok
+}
+
+cpu_rlca :: proc(cpu: ^Cpu) {
+	carry := (cpu.a & 0x80) != 0
+	cpu.a = (cpu.a << 1) | (cpu.a >> 7)
+	cpu.f = 0
+	cpu_set_flag(cpu, FLAG_C, carry)
+}
+
+cpu_rrca :: proc(cpu: ^Cpu) {
+	carry := (cpu.a & 0x01) != 0
+	cpu.a = (cpu.a >> 1) | (cpu.a << 7)
+	cpu.f = 0
+	cpu_set_flag(cpu, FLAG_C, carry)
+}
+
+cpu_rla :: proc(cpu: ^Cpu) {
+	old_carry := u8(0)
+	if (cpu.f & FLAG_C) != 0 {
+		old_carry = 1
+	}
+	carry := (cpu.a & 0x80) != 0
+	cpu.a = (cpu.a << 1) | old_carry
+	cpu.f = 0
+	cpu_set_flag(cpu, FLAG_C, carry)
+}
+
+cpu_rra :: proc(cpu: ^Cpu) {
+	old_carry := u8(0)
+	if (cpu.f & FLAG_C) != 0 {
+		old_carry = 0x80
+	}
+	carry := (cpu.a & 0x01) != 0
+	cpu.a = (cpu.a >> 1) | old_carry
+	cpu.f = 0
+	cpu_set_flag(cpu, FLAG_C, carry)
+}
+
+cpu_daa :: proc(cpu: ^Cpu) {
+	adjust := u8(0)
+	carry := (cpu.f & FLAG_C) != 0
+
+	if (cpu.f & FLAG_N) == 0 {
+		if carry || cpu.a > 0x99 {
+			adjust |= 0x60
+			carry = true
+		}
+		if (cpu.f & FLAG_H) != 0 || (cpu.a & 0x0F) > 0x09 {
+			adjust |= 0x06
+		}
+		cpu.a += adjust
+	} else {
+		if carry {
+			adjust |= 0x60
+		}
+		if (cpu.f & FLAG_H) != 0 {
+			adjust |= 0x06
+		}
+		cpu.a -= adjust
+	}
+
+	cpu_set_flag(cpu, FLAG_Z, cpu.a == 0)
+	cpu_set_flag(cpu, FLAG_H, false)
+	cpu_set_flag(cpu, FLAG_C, carry)
+}
+
+cpu_cpl :: proc(cpu: ^Cpu) {
+	cpu.a = ~cpu.a
+	cpu_set_flag(cpu, FLAG_N, true)
+	cpu_set_flag(cpu, FLAG_H, true)
+}
+
+cpu_scf :: proc(cpu: ^Cpu) {
+	cpu_set_flag(cpu, FLAG_N, false)
+	cpu_set_flag(cpu, FLAG_H, false)
+	cpu_set_flag(cpu, FLAG_C, true)
+}
+
+cpu_ccf :: proc(cpu: ^Cpu) {
+	carry := (cpu.f & FLAG_C) == 0
+	cpu_set_flag(cpu, FLAG_N, false)
+	cpu_set_flag(cpu, FLAG_H, false)
+	cpu_set_flag(cpu, FLAG_C, carry)
 }
 
 cpu_cp_a_imm8 :: proc(cpu: ^Cpu, value: u8) {
@@ -409,4 +532,3 @@ cpu_ld_a_r16mem :: proc(cpu: ^Cpu, bus: ^Bus, r_idx: R16_mem) {
 		cpu_set_r16(cpu, .HL, address - 1)
 	}
 }
-

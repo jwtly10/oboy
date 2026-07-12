@@ -920,8 +920,16 @@ expect_add_hl_r16 :: proc(
 	cycles, ok := gb.Cpu_step(&cpu, &bus)
 
 	testing.expect(t, ok, "Expected ADD HL, r16 opcode to succeed")
-	testing.expect(t, gb.cpu_get_hl(&cpu) == expected, "Expected ADD HL, r16 to store the 16-bit sum in HL")
-	testing.expect(t, cpu.f == expected_flags, "Expected ADD HL, r16 to preserve Z and set N, H, and C correctly")
+	testing.expect(
+		t,
+		gb.cpu_get_hl(&cpu) == expected,
+		"Expected ADD HL, r16 to store the 16-bit sum in HL",
+	)
+	testing.expect(
+		t,
+		cpu.f == expected_flags,
+		"Expected ADD HL, r16 to preserve Z and set N, H, and C correctly",
+	)
 	testing.expect(t, cpu.pc == 0x0101, "Expected ADD HL, r16 to advance PC by 1")
 	testing.expect(t, cycles == 2, "Expected ADD HL, r16 to take 2 cycles")
 }
@@ -1253,4 +1261,151 @@ test_ld_hl_indirect_imm8_writes_at_ffff_and_pc_wraps :: proc(t: ^testing.T) {
 	testing.expect(t, cpu.f == 0x10, "Expected LD [HL], imm8 to leave flags unchanged")
 	testing.expect(t, cpu.pc == 0x0000, "Expected the two-byte instruction PC to wrap to 0000")
 	testing.expect(t, cycles == 3, "Expected LD [HL], imm8 to take 3 cycles")
+}
+
+// --- accumulator rotate opcode tests ---
+
+expect_accumulator_rotate :: proc(
+	t: ^testing.T,
+	opcode, initial_a, initial_flags, expected_a, expected_flags: u8,
+) {
+	bus := make_test_bus([]u8{opcode})
+	cpu := make_test_cpu()
+	cpu.a = initial_a
+	cpu.f = initial_flags
+	cpu.b = 0x42
+	cpu.sp = 0xCDEF
+
+	cycles, ok := gb.Cpu_step(&cpu, &bus)
+
+	testing.expect(t, ok, "Expected accumulator rotate opcode to succeed")
+	testing.expect(t, cpu.a == expected_a, "Expected accumulator rotate to produce the correct A")
+	testing.expect(t, cpu.f == expected_flags, "Expected accumulator rotate to set only C")
+	testing.expect(t, cpu.pc == 0x0101, "Expected accumulator rotate to advance PC by 1")
+	testing.expect(t, cycles == 1, "Expected accumulator rotate to take 1 cycle")
+	testing.expect(
+		t,
+		cpu.b == 0x42,
+		"Expected accumulator rotate to leave other registers unchanged",
+	)
+	testing.expect(t, cpu.sp == 0xCDEF, "Expected accumulator rotate to leave SP unchanged")
+}
+
+@(test)
+test_rlca_rotates_bit_seven_into_bit_zero_and_carry :: proc(t: ^testing.T) {
+	expect_accumulator_rotate(t, 0x07, 0x85, 0xEF, 0x0B, 0x10)
+	expect_accumulator_rotate(t, 0x07, 0x42, 0x1F, 0x84, 0x00)
+}
+
+@(test)
+test_rrca_rotates_bit_zero_into_bit_seven_and_carry :: proc(t: ^testing.T) {
+	expect_accumulator_rotate(t, 0x0F, 0x81, 0xEF, 0xC0, 0x10)
+	expect_accumulator_rotate(t, 0x0F, 0x42, 0x1F, 0x21, 0x00)
+}
+
+@(test)
+test_rla_rotates_through_both_carry_states :: proc(t: ^testing.T) {
+	expect_accumulator_rotate(t, 0x17, 0x80, 0x0F, 0x00, 0x10)
+	expect_accumulator_rotate(t, 0x17, 0x40, 0xFF, 0x81, 0x00)
+}
+
+@(test)
+test_rra_rotates_through_both_carry_states :: proc(t: ^testing.T) {
+	expect_accumulator_rotate(t, 0x1F, 0x01, 0x0F, 0x00, 0x10)
+	expect_accumulator_rotate(t, 0x1F, 0x02, 0xFF, 0x81, 0x00)
+}
+
+// --- daa opcode tests ---
+
+expect_daa :: proc(t: ^testing.T, initial_a, initial_flags, expected_a, expected_flags: u8) {
+	bus := make_test_bus([]u8{0x27})
+	cpu := make_test_cpu()
+	cpu.a = initial_a
+	cpu.f = initial_flags
+	cpu.c = 0x55
+
+	cycles, ok := gb.Cpu_step(&cpu, &bus)
+
+	testing.expect(t, ok, "Expected DAA to succeed")
+	testing.expect(t, cpu.a == expected_a, "Expected DAA to produce the correct packed BCD value")
+	testing.expect(
+		t,
+		cpu.f == expected_flags,
+		"Expected DAA to set Z and C, preserve N, and clear H",
+	)
+	testing.expect(t, cpu.pc == 0x0101, "Expected DAA to advance PC by 1")
+	testing.expect(t, cycles == 1, "Expected DAA to take 1 cycle")
+	testing.expect(t, cpu.c == 0x55, "Expected DAA to leave other registers unchanged")
+}
+
+@(test)
+test_daa_adjusts_addition_low_and_high_digits :: proc(t: ^testing.T) {
+	expect_daa(t, 0x3C, 0x00, 0x42, 0x00)
+	expect_daa(t, 0x32, 0x20, 0x38, 0x00)
+	expect_daa(t, 0xA0, 0x00, 0x00, 0x90)
+	expect_daa(t, 0x21, 0x10, 0x81, 0x10)
+}
+
+@(test)
+test_daa_adjusts_subtraction_and_preserves_subtract_and_carry :: proc(t: ^testing.T) {
+	expect_daa(t, 0x0F, 0x60, 0x09, 0x40)
+	expect_daa(t, 0x73, 0x50, 0x13, 0x50)
+	expect_daa(t, 0x66, 0x70, 0x00, 0xD0)
+}
+
+@(test)
+test_daa_clears_stale_zero_half_carry_and_lower_flag_nibble :: proc(t: ^testing.T) {
+	expect_daa(t, 0x12, 0xAF, 0x18, 0x00)
+}
+
+// --- accumulator flag opcode tests ---
+
+expect_accumulator_flag_opcode :: proc(
+	t: ^testing.T,
+	opcode, initial_a, initial_flags, expected_a, expected_flags: u8,
+) {
+	bus := make_test_bus([]u8{opcode})
+	cpu := make_test_cpu()
+	cpu.a = initial_a
+	cpu.f = initial_flags
+	cpu.d = 0x77
+
+	cycles, ok := gb.Cpu_step(&cpu, &bus)
+
+	testing.expect(t, ok, "Expected accumulator flag opcode to succeed")
+	testing.expect(
+		t,
+		cpu.a == expected_a,
+		"Expected accumulator flag opcode to update A correctly",
+	)
+	testing.expect(
+		t,
+		cpu.f == expected_flags,
+		"Expected accumulator flag opcode to update flags correctly",
+	)
+	testing.expect(t, cpu.pc == 0x0101, "Expected accumulator flag opcode to advance PC by 1")
+	testing.expect(t, cycles == 1, "Expected accumulator flag opcode to take 1 cycle")
+	testing.expect(
+		t,
+		cpu.d == 0x77,
+		"Expected accumulator flag opcode to leave other registers unchanged",
+	)
+}
+
+@(test)
+test_cpl_complements_a_sets_n_and_h_and_preserves_z_and_c :: proc(t: ^testing.T) {
+	expect_accumulator_flag_opcode(t, 0x2F, 0x35, 0x9F, 0xCA, 0xF0)
+	expect_accumulator_flag_opcode(t, 0x2F, 0xFF, 0x00, 0x00, 0x60)
+}
+
+@(test)
+test_scf_sets_carry_clears_n_and_h_and_preserves_zero :: proc(t: ^testing.T) {
+	expect_accumulator_flag_opcode(t, 0x37, 0x5A, 0xEF, 0x5A, 0x90)
+	expect_accumulator_flag_opcode(t, 0x37, 0x5A, 0x00, 0x5A, 0x10)
+}
+
+@(test)
+test_ccf_toggles_carry_clears_n_and_h_and_preserves_zero :: proc(t: ^testing.T) {
+	expect_accumulator_flag_opcode(t, 0x3F, 0xA5, 0xFF, 0xA5, 0x80)
+	expect_accumulator_flag_opcode(t, 0x3F, 0xA5, 0x8F, 0xA5, 0x90)
 }
