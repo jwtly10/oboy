@@ -11,5 +11,5 @@ make_test_bus :: proc(program: []u8) -> gb.Bus {
 }
 
 make_test_cpu :: proc() -> gb.Cpu {
-	return gb.Cpu{pc = 0x0100, sp = 0xFFFE}
+	return gb.Cpu{pc = 0x0100, sp = 0xFFFE, trace = true}
 }
