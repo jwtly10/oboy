@@ -22,6 +22,7 @@ Cpu :: struct {
 	sp:      u16,
 	pc:      u16,
 	stopped: bool,
+	halted:  bool,
 	trace:   bool,
 }
 
@@ -65,6 +66,11 @@ Cpu_step :: proc(cpu: ^Cpu, bus: ^Bus) -> (cycles: int, ok: bool) {
 	if (cpu.stopped) {
 		// No CPU cycles consumed
 		return 0, true
+	}
+
+	if (cpu.halted) {
+		// Consume cycle, but no instruction execution
+		return 1, true
 	}
 
 	instruction_address := cpu.pc
@@ -111,36 +117,36 @@ Cpu_step :: proc(cpu: ^Cpu, bus: ^Bus) -> (cycles: int, ok: bool) {
 		ok = true
 	case 0x04, 0x0C, 0x14, 0x1C, 0x24, 0x2C, 0x34, 0x3C:
 		// inc r8
-		r_idx := R8((opcode >> 3) & 0b111)
-		value := cpu_read_r8(cpu, bus, r_idx)
-		value = cpu_inc_r8(cpu, value)
-		cpu_write_r8(cpu, bus, r_idx, value)
+		dest := R8((opcode >> 3) & 0b111)
+		value := cpu_read_r8(cpu, bus, dest)
+		result := cpu_inc_r8(cpu, value)
+		cpu_write_r8(cpu, bus, dest, result)
 
 		cycles = 1
-		if r_idx == .HL_INDIRECT {
+		if dest == .HL_INDIRECT {
 			cycles = 3
 		}
 		ok = true
 	case 0x05, 0x0D, 0x15, 0x1D, 0x25, 0x2D, 0x35, 0x3D:
 		// dec r8
-		r_idx := R8((opcode >> 3) & 0b111)
-		value := cpu_read_r8(cpu, bus, r_idx)
+		dest := R8((opcode >> 3) & 0b111)
+		value := cpu_read_r8(cpu, bus, dest)
 		value = cpu_dec_r8(cpu, value)
-		cpu_write_r8(cpu, bus, r_idx, value)
+		cpu_write_r8(cpu, bus, dest, value)
 
 		cycles = 1
-		if r_idx == .HL_INDIRECT {
+		if dest == .HL_INDIRECT {
 			cycles = 3
 		}
 		ok = true
 	case 0x06, 0x16, 0x26, 0x36, 0x0E, 0x1E, 0x2E, 0x3E:
 		// ld r8, imm8
-		r_idx := R8((opcode >> 3) & 0b111)
+		dest := R8((opcode >> 3) & 0b111)
 		value := cpu_fetch_u8(cpu, bus)
-		cpu_write_r8(cpu, bus, r_idx, value)
+		cpu_write_r8(cpu, bus, dest, value)
 
 		cycles = 2
-		if r_idx == .HL_INDIRECT {
+		if dest == .HL_INDIRECT {
 			cycles = 3
 		}
 		ok = true
@@ -246,6 +252,31 @@ Cpu_step :: proc(cpu: ^Cpu, bus: ^Bus) -> (cycles: int, ok: bool) {
 		_ = cpu_fetch_u8(cpu, bus)
 		cpu.stopped = true
 		cycles = 1
+		ok = true
+	case 0x40 ..= 0x7F:
+		// ld r8, r8
+		cycles = 1
+		if opcode == 0x76 {
+			// LD HL, HL Exception
+			cpu.halted = true
+			cycles = 1
+			ok = true
+			break
+		}
+
+		//dest bits 5-4-3
+		dest := R8((opcode >> 3) & 0b111)
+		// src bits 2-1-0
+		src := R8((opcode) & 0b111)
+
+		value := cpu_read_r8(cpu, bus, src)
+		cpu_write_r8(cpu, bus, dest, value)
+
+		cycles = 1
+		if dest == .HL_INDIRECT || src == .HL_INDIRECT {
+			cycles = 2
+		}
+
 		ok = true
 	case:
 		fmt.printf("Unimplemented opcode 0x%02X at 0x%04X\n", opcode, instruction_address)
@@ -362,8 +393,8 @@ cpu_fetch_u16 :: proc(cpu: ^Cpu, bus: ^Bus) -> u16 {
 	return low | (high << 8)
 }
 
-cpu_read_r8 :: proc(cpu: ^Cpu, bus: ^Bus, r_idx: R8) -> u8 {
-	switch r_idx {
+cpu_read_r8 :: proc(cpu: ^Cpu, bus: ^Bus, dest: R8) -> u8 {
+	switch dest {
 	case .B:
 		return cpu.b
 	case .C:
@@ -385,8 +416,8 @@ cpu_read_r8 :: proc(cpu: ^Cpu, bus: ^Bus, r_idx: R8) -> u8 {
 	unreachable()
 }
 
-cpu_write_r8 :: proc(cpu: ^Cpu, bus: ^Bus, r_idx: R8, value: u8) {
-	switch r_idx {
+cpu_write_r8 :: proc(cpu: ^Cpu, bus: ^Bus, dest: R8, value: u8) {
+	switch dest {
 	case .B:
 		cpu.b = value
 	case .C:
@@ -444,7 +475,7 @@ cpu_get_hl :: proc(cpu: ^Cpu) -> u16 {
 	return (u16(cpu.h) << 8) | u16(cpu.l)
 }
 
-// Increments the contents of register R8 by 1.
+// Increments by 1, and sets flags
 cpu_inc_r8 :: proc(cpu: ^Cpu, value: u8) -> u8 {
 	result := value + 1
 
@@ -456,7 +487,7 @@ cpu_inc_r8 :: proc(cpu: ^Cpu, value: u8) -> u8 {
 	return result
 }
 
-// Decrements the contents of register R8 by 1.
+// Decrements by 1 and sets flags
 cpu_dec_r8 :: proc(cpu: ^Cpu, value: u8) -> u8 {
 	result := value - 1
 
@@ -469,8 +500,8 @@ cpu_dec_r8 :: proc(cpu: ^Cpu, value: u8) -> u8 {
 }
 
 // Increments the contents of register pair R16 by 1.
-cpu_inc_r16 :: proc(cpu: ^Cpu, r_idx: R16) {
-	switch r_idx {
+cpu_inc_r16 :: proc(cpu: ^Cpu, dest: R16) {
+	switch dest {
 	case .BC:
 		cpu_set_r16(cpu, .BC, cpu_get_bc(cpu) + 1)
 	case .DE:
@@ -483,8 +514,8 @@ cpu_inc_r16 :: proc(cpu: ^Cpu, r_idx: R16) {
 }
 
 // Decrements the contents of register pair R16 by 1.
-cpu_dec_r16 :: proc(cpu: ^Cpu, r_idx: R16) {
-	switch r_idx {
+cpu_dec_r16 :: proc(cpu: ^Cpu, dest: R16) {
+	switch dest {
 	case .BC:
 		cpu_set_r16(cpu, .BC, cpu_get_bc(cpu) - 1)
 	case .DE:
@@ -498,11 +529,11 @@ cpu_dec_r16 :: proc(cpu: ^Cpu, r_idx: R16) {
 
 // Adds the contents of register pair R16 to the contents of register pair HL,
 // and store the results in register pair HL.
-cpu_add_hl_r16 :: proc(cpu: ^Cpu, r_idx: R16) {
+cpu_add_hl_r16 :: proc(cpu: ^Cpu, dest: R16) {
 	hl := cpu_get_hl(cpu)
 	value: u16
 
-	switch r_idx {
+	switch dest {
 	case .BC:
 		value = cpu_get_bc(cpu)
 	case .DE:
@@ -525,8 +556,8 @@ cpu_add_hl_r16 :: proc(cpu: ^Cpu, r_idx: R16) {
 }
 
 // Set R16 reg specified value
-cpu_set_r16 :: proc(cpu: ^Cpu, r_idx: R16, value: u16) {
-	switch r_idx {
+cpu_set_r16 :: proc(cpu: ^Cpu, dest: R16, value: u16) {
+	switch dest {
 	case .BC:
 		cpu.b = u8((value >> 8)) // Shifts bits right to move hi > low & casts
 		cpu.c = u8(value) // Cast takes the low byte
@@ -543,8 +574,8 @@ cpu_set_r16 :: proc(cpu: ^Cpu, r_idx: R16, value: u16) {
 
 // Stores the contents of register A in the memory location specified by register pair R16_mem.
 // If HL reg, increment or decrement.
-cpu_ld_r16mem_a :: proc(cpu: ^Cpu, bus: ^Bus, r_idx: R16_mem) {
-	switch r_idx {
+cpu_ld_r16mem_a :: proc(cpu: ^Cpu, bus: ^Bus, dest: R16_mem) {
+	switch dest {
 	case .BC:
 		bus_write_byte(bus, cpu_get_bc(cpu), cpu.a)
 	case .DE:
@@ -561,8 +592,8 @@ cpu_ld_r16mem_a :: proc(cpu: ^Cpu, bus: ^Bus, r_idx: R16_mem) {
 }
 
 // Loads the 8-bit contents of memory specified by register pair R16_mem into register A.
-cpu_ld_a_r16mem :: proc(cpu: ^Cpu, bus: ^Bus, r_idx: R16_mem) {
-	switch r_idx {
+cpu_ld_a_r16mem :: proc(cpu: ^Cpu, bus: ^Bus, dest: R16_mem) {
+	switch dest {
 	case .BC:
 		cpu.a = bus_read_byte(bus, cpu_get_bc(cpu))
 	case .DE:

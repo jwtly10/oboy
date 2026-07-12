@@ -1562,3 +1562,134 @@ test_stopped_cpu_does_not_fetch_or_execute_next_instruction :: proc(t: ^testing.
 	testing.expect(t, cpu.stopped, "Expected the CPU to remain stopped without a wake event")
 }
 
+// --- ld r8, r8 opcode tests ---
+
+@(test)
+test_ld_r8_r8_copies_register_and_preserves_state :: proc(t: ^testing.T) {
+	bus := make_test_bus([]u8{0x41}) // LD B, C
+	cpu := make_test_cpu()
+	cpu.a = 0xA1
+	cpu.b = 0xB2
+	cpu.c = 0xC3
+	cpu.sp = 0xFEDC
+	cpu.f = 0xAF
+
+	cycles, ok := gb.Cpu_step(&cpu, &bus)
+
+	testing.expect(t, ok, "Expected LD B, C to succeed")
+	testing.expect(t, cpu.b == 0xC3, "Expected LD B, C to copy C into B")
+	testing.expect(t, cpu.c == 0xC3, "Expected LD B, C to leave C unchanged")
+	testing.expect(t, cpu.a == 0xA1, "Expected LD B, C to leave other registers unchanged")
+	testing.expect(t, cpu.sp == 0xFEDC, "Expected LD B, C to leave SP unchanged")
+	testing.expect(t, cpu.f == 0xAF, "Expected LD B, C to preserve the entire F register")
+	testing.expect(t, cpu.pc == 0x0101, "Expected LD B, C to advance PC by 1")
+	testing.expect(t, cycles == 1, "Expected LD B, C to take 1 cycle")
+}
+
+@(test)
+test_ld_r8_r8_decodes_high_register_codes :: proc(t: ^testing.T) {
+	bus := make_test_bus([]u8{0x7C}) // LD A, H
+	cpu := make_test_cpu()
+	cpu.a = 0x19
+	cpu.b = 0xB2
+	cpu.h = 0xE7
+	cpu.f = 0x10
+
+	cycles, ok := gb.Cpu_step(&cpu, &bus)
+
+	testing.expect(t, ok, "Expected LD A, H to succeed")
+	testing.expect(t, cpu.a == 0xE7, "Expected LD A, H to copy H into A")
+	testing.expect(t, cpu.h == 0xE7, "Expected LD A, H to leave H unchanged")
+	testing.expect(t, cpu.b == 0xB2, "Expected LD A, H to leave B unchanged")
+	testing.expect(t, cpu.f == 0x10, "Expected LD A, H to preserve flags")
+	testing.expect(t, cpu.pc == 0x0101, "Expected LD A, H to advance PC by 1")
+	testing.expect(t, cycles == 1, "Expected LD A, H to take 1 cycle")
+}
+
+@(test)
+test_ld_hl_indirect_r8_writes_memory_at_ffff :: proc(t: ^testing.T) {
+	bus := make_test_bus([]u8{0x77}) // LD [HL], A
+	cpu := make_test_cpu()
+	cpu.a = 0x5A
+	cpu.h = 0xFF
+	cpu.l = 0xFF
+	cpu.f = 0xB0
+	gb.bus_write_byte(&bus, 0xFFFF, 0x16)
+
+	cycles, ok := gb.Cpu_step(&cpu, &bus)
+
+	testing.expect(t, ok, "Expected LD [HL], A to succeed")
+	testing.expect(
+		t,
+		gb.bus_read_byte(&bus, 0xFFFF) == 0x5A,
+		"Expected LD [HL], A to write A at HL",
+	)
+	testing.expect(t, cpu.a == 0x5A, "Expected LD [HL], A to leave A unchanged")
+	testing.expect(t, gb.cpu_get_hl(&cpu) == 0xFFFF, "Expected LD [HL], A to leave HL unchanged")
+	testing.expect(t, cpu.f == 0xB0, "Expected LD [HL], A to preserve flags")
+	testing.expect(t, cpu.pc == 0x0101, "Expected LD [HL], A to advance PC by 1")
+	testing.expect(t, cycles == 2, "Expected LD [HL], A to take 2 cycles")
+}
+
+@(test)
+test_ld_r8_hl_indirect_reads_memory :: proc(t: ^testing.T) {
+	bus := make_test_bus([]u8{0x56}) // LD D, [HL]
+	cpu := make_test_cpu()
+	cpu.d = 0x21
+	cpu.h = 0xC1
+	cpu.l = 0x23
+	cpu.f = 0x00
+	gb.bus_write_byte(&bus, 0xC123, 0x9D)
+
+	cycles, ok := gb.Cpu_step(&cpu, &bus)
+
+	testing.expect(t, ok, "Expected LD D, [HL] to succeed")
+	testing.expect(t, cpu.d == 0x9D, "Expected LD D, [HL] to read the byte at HL")
+	testing.expect(
+		t,
+		gb.bus_read_byte(&bus, 0xC123) == 0x9D,
+		"Expected LD D, [HL] to leave memory unchanged",
+	)
+	testing.expect(t, gb.cpu_get_hl(&cpu) == 0xC123, "Expected LD D, [HL] to leave HL unchanged")
+	testing.expect(t, cpu.f == 0x00, "Expected LD D, [HL] to preserve clear flags")
+	testing.expect(t, cpu.pc == 0x0101, "Expected LD D, [HL] to advance PC by 1")
+	testing.expect(t, cycles == 2, "Expected LD D, [HL] to take 2 cycles")
+}
+
+@(test)
+test_ld_r8_r8_self_load_leaves_register_unchanged :: proc(t: ^testing.T) {
+	bus := make_test_bus([]u8{0x7F}) // LD A, A
+	cpu := make_test_cpu()
+	cpu.a = 0xE4
+	cpu.f = 0xF0
+
+	cycles, ok := gb.Cpu_step(&cpu, &bus)
+
+	testing.expect(t, ok, "Expected LD A, A to succeed")
+	testing.expect(t, cpu.a == 0xE4, "Expected LD A, A to leave A unchanged")
+	testing.expect(t, cpu.f == 0xF0, "Expected LD A, A to preserve flags")
+	testing.expect(t, cpu.pc == 0x0101, "Expected LD A, A to advance PC by 1")
+	testing.expect(t, cycles == 1, "Expected LD A, A to take 1 cycle")
+}
+
+@(test)
+test_halt_opcode_enters_halted_state_without_executing_next_opcode :: proc(t: ^testing.T) {
+	bus := make_test_bus([]u8{0x76, 0x41}) // HALT; LD B, C
+	cpu := make_test_cpu()
+	cpu.b = 0x12
+	cpu.c = 0x34
+	cpu.f = 0x90
+
+	first_cycles, first_ok := gb.Cpu_step(&cpu, &bus)
+	second_cycles, second_ok := gb.Cpu_step(&cpu, &bus)
+
+	testing.expect(t, first_ok, "Expected HALT to succeed")
+	testing.expect(t, second_ok, "Expected a halted CPU step to succeed")
+	testing.expect(t, cpu.halted, "Expected opcode 76 to enter the halted state")
+	testing.expect(t, cpu.pc == 0x0101, "Expected a halted CPU not to fetch the next opcode")
+	testing.expect(t, cpu.b == 0x12, "Expected a halted CPU not to execute the next opcode")
+	testing.expect(t, cpu.c == 0x34, "Expected HALT to leave registers unchanged")
+	testing.expect(t, cpu.f == 0x90, "Expected HALT to preserve flags")
+	testing.expect(t, first_cycles == 1, "Expected HALT to take 1 cycle")
+	testing.expect(t, second_cycles == 1, "Expected a halted CPU step to consume 1 cycle")
+}
