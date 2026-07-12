@@ -2379,3 +2379,125 @@ test_push_r16stk_wraps_stack_pointer :: proc(t: ^testing.T) {
 	testing.expect(t, cpu.pc == 0x0101, "Expected PUSH BC to advance PC by 1")
 	testing.expect(t, cycles == 4, "Expected PUSH BC to take 4 cycles")
 }
+
+// --- LDH and absolute accumulator load opcode tests ---
+
+@(test)
+test_ldh_c_accumulator_loads_cover_high_memory_boundaries :: proc(t: ^testing.T) {
+	offsets := [2]u8{0x00, 0xFF}
+	for offset in offsets {
+		address := 0xFF00 + u16(offset)
+
+		store_bus := make_test_bus([]u8{0xE2})
+		store_cpu := make_test_cpu()
+		store_cpu.a = 0xA5
+		store_cpu.c = offset
+		store_cpu.f = 0xF0
+		store_cycles, store_ok := gb.Cpu_step(&store_cpu, &store_bus)
+
+		testing.expect(t, store_ok, "Expected LDH [C], A to succeed")
+		testing.expect(
+			t,
+			store_bus.memory[address] == 0xA5,
+			"Expected LDH [C], A to write to FF00+C",
+		)
+		testing.expect(
+			t,
+			store_cpu.a == 0xA5 && store_cpu.c == offset,
+			"Expected LDH [C], A to preserve A and C",
+		)
+		testing.expect(t, store_cpu.f == 0xF0, "Expected LDH [C], A to preserve flags")
+		testing.expect(t, store_cpu.pc == 0x0101, "Expected LDH [C], A to advance PC by 1")
+		testing.expect(t, store_cycles == 2, "Expected LDH [C], A to take 2 cycles")
+
+		load_bus := make_test_bus([]u8{0xF2})
+		load_bus.memory[address] = 0x5A
+		load_cpu := make_test_cpu()
+		load_cpu.a = 0x11
+		load_cpu.c = offset
+		load_cpu.f = 0xB0
+		load_cycles, load_ok := gb.Cpu_step(&load_cpu, &load_bus)
+
+		testing.expect(t, load_ok, "Expected LDH A, [C] to succeed")
+		testing.expect(t, load_cpu.a == 0x5A, "Expected LDH A, [C] to read from FF00+C")
+		testing.expect(t, load_cpu.c == offset, "Expected LDH A, [C] to preserve C")
+		testing.expect(t, load_cpu.f == 0xB0, "Expected LDH A, [C] to preserve flags")
+		testing.expect(t, load_cpu.pc == 0x0101, "Expected LDH A, [C] to advance PC by 1")
+		testing.expect(t, load_cycles == 2, "Expected LDH A, [C] to take 2 cycles")
+	}
+}
+
+@(test)
+test_ldh_imm8_accumulator_loads_cover_high_memory_boundaries :: proc(t: ^testing.T) {
+	offsets := [2]u8{0x00, 0xFF}
+	for offset in offsets {
+		address := 0xFF00 + u16(offset)
+
+		store_bus := make_test_bus([]u8{0xE0, offset})
+		store_cpu := make_test_cpu()
+		store_cpu.a = 0xA5
+		store_cpu.f = 0xF0
+		store_cycles, store_ok := gb.Cpu_step(&store_cpu, &store_bus)
+
+		testing.expect(t, store_ok, "Expected LDH [imm8], A to succeed")
+		testing.expect(
+			t,
+			store_bus.memory[address] == 0xA5,
+			"Expected LDH [imm8], A to write to FF00+imm8",
+		)
+		testing.expect(
+			t,
+			store_cpu.a == 0xA5 && store_cpu.f == 0xF0,
+			"Expected LDH [imm8], A to preserve A and flags",
+		)
+		testing.expect(t, store_cpu.pc == 0x0102, "Expected LDH [imm8], A to advance PC by 2")
+		testing.expect(t, store_cycles == 3, "Expected LDH [imm8], A to take 3 cycles")
+
+		load_bus := make_test_bus([]u8{0xF0, offset})
+		load_bus.memory[address] = 0x5A
+		load_cpu := make_test_cpu()
+		load_cpu.f = 0xB0
+		load_cycles, load_ok := gb.Cpu_step(&load_cpu, &load_bus)
+
+		testing.expect(t, load_ok, "Expected LDH A, [imm8] to succeed")
+		testing.expect(t, load_cpu.a == 0x5A, "Expected LDH A, [imm8] to read from FF00+imm8")
+		testing.expect(t, load_cpu.f == 0xB0, "Expected LDH A, [imm8] to preserve flags")
+		testing.expect(t, load_cpu.pc == 0x0102, "Expected LDH A, [imm8] to advance PC by 2")
+		testing.expect(t, load_cycles == 3, "Expected LDH A, [imm8] to take 3 cycles")
+	}
+}
+
+@(test)
+test_ld_imm16_accumulator_loads_use_little_endian_address :: proc(t: ^testing.T) {
+	store_bus := make_test_bus([]u8{0xEA, 0x34, 0xC2})
+	store_cpu := make_test_cpu()
+	store_cpu.a = 0xA5
+	store_cpu.f = 0xF0
+	store_cycles, store_ok := gb.Cpu_step(&store_cpu, &store_bus)
+
+	testing.expect(t, store_ok, "Expected LD [imm16], A to succeed")
+	testing.expect(
+		t,
+		store_bus.memory[0xC234] == 0xA5,
+		"Expected LD [imm16], A to use a little-endian address",
+	)
+	testing.expect(
+		t,
+		store_cpu.a == 0xA5 && store_cpu.f == 0xF0,
+		"Expected LD [imm16], A to preserve A and flags",
+	)
+	testing.expect(t, store_cpu.pc == 0x0103, "Expected LD [imm16], A to advance PC by 3")
+	testing.expect(t, store_cycles == 4, "Expected LD [imm16], A to take 4 cycles")
+
+	load_bus := make_test_bus([]u8{0xFA, 0x34, 0xC2})
+	load_bus.memory[0xC234] = 0x5A
+	load_cpu := make_test_cpu()
+	load_cpu.f = 0xB0
+	load_cycles, load_ok := gb.Cpu_step(&load_cpu, &load_bus)
+
+	testing.expect(t, load_ok, "Expected LD A, [imm16] to succeed")
+	testing.expect(t, load_cpu.a == 0x5A, "Expected LD A, [imm16] to use a little-endian address")
+	testing.expect(t, load_cpu.f == 0xB0, "Expected LD A, [imm16] to preserve flags")
+	testing.expect(t, load_cpu.pc == 0x0103, "Expected LD A, [imm16] to advance PC by 3")
+	testing.expect(t, load_cycles == 4, "Expected LD A, [imm16] to take 4 cycles")
+}

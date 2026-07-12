@@ -354,6 +354,43 @@ Cpu_step :: proc(cpu: ^Cpu, bus: ^Bus) -> (cycles: int, ok: bool) {
 		cpu_push_u16(cpu, bus, cpu_get_r16stk(cpu, source))
 		cycles = 4
 		ok = true
+	case 0xE2:
+		// ldh [c], a
+		bus_write_byte(bus, 0xFF00 + u16(cpu.c), cpu.a)
+		cycles = 2
+		ok = true
+	case 0xE0:
+		// ldh [imm8], a
+
+		// address should be in range 0xFF00-0xFFFF
+		// but we only get lower 8 bit, so 0xFF00 is implied higher byte
+		address := 0xFF00 + u16(cpu_fetch_u8(cpu, bus))
+		bus_write_byte(bus, address, cpu.a)
+		cycles = 3
+		ok = true
+	case 0xEA:
+		// ld [imm16], a
+		address := cpu_fetch_u16(cpu, bus)
+		bus_write_byte(bus, address, cpu.a)
+		cycles = 4
+		ok = true
+	case 0xF2:
+		// ldh a, [c]
+		cpu.a = bus_read_byte(bus, 0xFF00 + u16(cpu.c))
+		cycles = 2
+		ok = true
+	case 0xF0:
+		// ldh a, [imm8]
+		address := 0xFF00 + u16(cpu_fetch_u8(cpu, bus))
+		cpu.a = bus_read_byte(bus, address)
+		cycles = 3
+		ok = true
+	case 0xFA:
+		// ld a, [imm16]
+		address := cpu_fetch_u16(cpu, bus)
+		cpu.a = bus_read_byte(bus, address)
+		cycles = 4
+		ok = true
 	case:
 		fmt.printf("Unimplemented opcode 0x%02X at 0x%04X\n", opcode, instruction_address)
 		cycles = 0
