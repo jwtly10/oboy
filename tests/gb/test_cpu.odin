@@ -1693,3 +1693,186 @@ test_halt_opcode_enters_halted_state_without_executing_next_opcode :: proc(t: ^t
 	testing.expect(t, first_cycles == 1, "Expected HALT to take 1 cycle")
 	testing.expect(t, second_cycles == 1, "Expected a halted CPU step to consume 1 cycle")
 }
+
+// --- 8-bit arithmetic and logic opcode tests ---
+
+@(test)
+test_alu_r8_executes_every_opcode_with_correct_timing :: proc(t: ^testing.T) {
+	for opcode := u8(0x80); opcode <= 0xBF; opcode += 1 {
+		bus := make_test_bus([]u8{opcode})
+		cpu := make_test_cpu()
+		cpu.a = 0x31
+		cpu.b = 0x01
+		cpu.c = 0x02
+		cpu.d = 0x03
+		cpu.e = 0x04
+		cpu.h = 0xC1
+		cpu.l = 0x23
+		cpu.f = 0x1F
+		gb.bus_write_byte(&bus, 0xC123, 0x06)
+
+		cycles, ok := gb.Cpu_step(&cpu, &bus)
+		expected_cycles := 1
+		if (opcode & 0b111) == 6 {
+			expected_cycles = 2
+		}
+
+		testing.expect(t, ok, "Expected every ALU r8 opcode to succeed")
+		testing.expect(t, cycles == expected_cycles, "Expected ALU r8 timing to depend on [HL]")
+		testing.expect(t, cpu.pc == 0x0101, "Expected every ALU r8 opcode to advance PC by 1")
+		testing.expect(
+			t,
+			(cpu.f & 0x0F) == 0,
+			"Expected every ALU r8 opcode to clear F's lower nibble",
+		)
+		testing.expect(t, gb.cpu_get_hl(&cpu) == 0xC123, "Expected ALU r8 opcodes to preserve HL")
+		testing.expect(
+			t,
+			gb.bus_read_byte(&bus, 0xC123) == 0x06,
+			"Expected ALU [HL] to preserve memory",
+		)
+	}
+}
+
+@(test)
+test_add_a_r8_sets_zero_half_carry_and_carry :: proc(t: ^testing.T) {
+	bus := make_test_bus([]u8{0x80}) // ADD A, B
+	cpu := make_test_cpu()
+	cpu.a = 0x88
+	cpu.b = 0x78
+	cpu.f = 0xFF
+
+	cycles, ok := gb.Cpu_step(&cpu, &bus)
+
+	testing.expect(t, ok, "Expected ADD A, B to succeed")
+	testing.expect(t, cpu.a == 0x00, "Expected ADD result to wrap to zero")
+	testing.expect(t, cpu.b == 0x78, "Expected ADD to preserve its source")
+	testing.expect(t, cpu.f == 0xB0, "Expected ADD to set Z, H, and C and clear N")
+	testing.expect(t, cpu.pc == 0x0101, "Expected ADD A, B to advance PC by 1")
+	testing.expect(t, cycles == 1, "Expected ADD A, B to take 1 cycle")
+}
+
+@(test)
+test_adc_a_r8_uses_carry_input_for_result_and_flags :: proc(t: ^testing.T) {
+	bus := make_test_bus([]u8{0x89}) // ADC A, C
+	cpu := make_test_cpu()
+	cpu.a = 0x0F
+	cpu.c = 0x00
+	cpu.f = 0x1F
+
+	cycles, ok := gb.Cpu_step(&cpu, &bus)
+
+	testing.expect(t, ok, "Expected ADC A, C to succeed")
+	testing.expect(t, cpu.a == 0x10, "Expected ADC to add the incoming carry")
+	testing.expect(t, cpu.c == 0x00, "Expected ADC to preserve its source")
+	testing.expect(t, cpu.f == 0x20, "Expected ADC carry input to cause half-carry")
+	testing.expect(t, cpu.pc == 0x0101, "Expected ADC A, C to advance PC by 1")
+	testing.expect(t, cycles == 1, "Expected ADC A, C to take 1 cycle")
+}
+
+@(test)
+test_sub_a_r8_wraps_and_sets_half_borrow_and_borrow :: proc(t: ^testing.T) {
+	bus := make_test_bus([]u8{0x92}) // SUB A, D
+	cpu := make_test_cpu()
+	cpu.a = 0x00
+	cpu.d = 0x01
+	cpu.f = 0xAF
+
+	cycles, ok := gb.Cpu_step(&cpu, &bus)
+
+	testing.expect(t, ok, "Expected SUB A, D to succeed")
+	testing.expect(t, cpu.a == 0xFF, "Expected SUB result to wrap to 0xFF")
+	testing.expect(t, cpu.d == 0x01, "Expected SUB to preserve its source")
+	testing.expect(t, cpu.f == 0x70, "Expected SUB to set N, H, and C")
+	testing.expect(t, cpu.pc == 0x0101, "Expected SUB A, D to advance PC by 1")
+	testing.expect(t, cycles == 1, "Expected SUB A, D to take 1 cycle")
+}
+
+@(test)
+test_sbc_a_r8_includes_carry_in_half_borrow_and_borrow :: proc(t: ^testing.T) {
+	bus := make_test_bus([]u8{0x9B}) // SBC A, E
+	cpu := make_test_cpu()
+	cpu.a = 0x10
+	cpu.e = 0x0F
+	cpu.f = 0x1F
+
+	cycles, ok := gb.Cpu_step(&cpu, &bus)
+
+	testing.expect(t, ok, "Expected SBC A, E to succeed")
+	testing.expect(t, cpu.a == 0x00, "Expected SBC to subtract the incoming carry")
+	testing.expect(t, cpu.e == 0x0F, "Expected SBC to preserve its source")
+	testing.expect(t, cpu.f == 0xE0, "Expected SBC to set Z, N, and H without full borrow")
+	testing.expect(t, cpu.pc == 0x0101, "Expected SBC A, E to advance PC by 1")
+	testing.expect(t, cycles == 1, "Expected SBC A, E to take 1 cycle")
+}
+
+@(test)
+test_and_a_hl_sets_only_half_carry :: proc(t: ^testing.T) {
+	bus := make_test_bus([]u8{0xA6}) // AND A, [HL]
+	cpu := make_test_cpu()
+	cpu.a = 0xF3
+	cpu.h = 0xC0
+	cpu.l = 0x00
+	cpu.f = 0xDF
+	gb.bus_write_byte(&bus, 0xC000, 0x0F)
+
+	cycles, ok := gb.Cpu_step(&cpu, &bus)
+
+	testing.expect(t, ok, "Expected AND A, [HL] to succeed")
+	testing.expect(t, cpu.a == 0x03, "Expected AND to store the bitwise result in A")
+	testing.expect(t, cpu.f == 0x20, "Expected AND to set H and clear Z, N, and C")
+	testing.expect(t, cpu.pc == 0x0101, "Expected AND A, [HL] to advance PC by 1")
+	testing.expect(t, cycles == 2, "Expected AND A, [HL] to take 2 cycles")
+}
+
+@(test)
+test_xor_a_a_sets_zero_and_clears_other_flags :: proc(t: ^testing.T) {
+	bus := make_test_bus([]u8{0xAF}) // XOR A, A
+	cpu := make_test_cpu()
+	cpu.a = 0x5A
+	cpu.f = 0x7F
+
+	cycles, ok := gb.Cpu_step(&cpu, &bus)
+
+	testing.expect(t, ok, "Expected XOR A, A to succeed")
+	testing.expect(t, cpu.a == 0x00, "Expected XOR A, A to clear A")
+	testing.expect(t, cpu.f == 0x80, "Expected XOR to set only Z")
+	testing.expect(t, cpu.pc == 0x0101, "Expected XOR A, A to advance PC by 1")
+	testing.expect(t, cycles == 1, "Expected XOR A, A to take 1 cycle")
+}
+
+@(test)
+test_or_a_h_sets_result_and_clears_all_flags :: proc(t: ^testing.T) {
+	bus := make_test_bus([]u8{0xB4}) // OR A, H
+	cpu := make_test_cpu()
+	cpu.a = 0x50
+	cpu.h = 0x0A
+	cpu.f = 0xFF
+
+	cycles, ok := gb.Cpu_step(&cpu, &bus)
+
+	testing.expect(t, ok, "Expected OR A, H to succeed")
+	testing.expect(t, cpu.a == 0x5A, "Expected OR to store the bitwise result in A")
+	testing.expect(t, cpu.h == 0x0A, "Expected OR to preserve its source")
+	testing.expect(t, cpu.f == 0x00, "Expected nonzero OR to clear all flags")
+	testing.expect(t, cpu.pc == 0x0101, "Expected OR A, H to advance PC by 1")
+	testing.expect(t, cycles == 1, "Expected OR A, H to take 1 cycle")
+}
+
+@(test)
+test_cp_a_l_sets_subtraction_flags_without_changing_a :: proc(t: ^testing.T) {
+	bus := make_test_bus([]u8{0xBD}) // CP A, L
+	cpu := make_test_cpu()
+	cpu.a = 0x10
+	cpu.l = 0x20
+	cpu.f = 0xAF
+
+	cycles, ok := gb.Cpu_step(&cpu, &bus)
+
+	testing.expect(t, ok, "Expected CP A, L to succeed")
+	testing.expect(t, cpu.a == 0x10, "Expected CP to preserve A")
+	testing.expect(t, cpu.l == 0x20, "Expected CP to preserve its source")
+	testing.expect(t, cpu.f == 0x50, "Expected CP to set N and C without half-borrow")
+	testing.expect(t, cpu.pc == 0x0101, "Expected CP A, L to advance PC by 1")
+	testing.expect(t, cycles == 1, "Expected CP A, L to take 1 cycle")
+}

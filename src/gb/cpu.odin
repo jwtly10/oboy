@@ -278,6 +278,19 @@ Cpu_step :: proc(cpu: ^Cpu, bus: ^Bus) -> (cycles: int, ok: bool) {
 		}
 
 		ok = true
+	case 0x80 ..= 0xBF:
+		operation := (opcode >> 3) & 0b111
+		src := R8(opcode & 0b111)
+		value := cpu_read_r8(cpu, bus, src)
+
+		cpu_execute_alu(cpu, operation, value)
+
+		cycles = 1
+		if src == .HL_INDIRECT {
+			cycles = 2
+		}
+
+		ok = true
 	case:
 		fmt.printf("Unimplemented opcode 0x%02X at 0x%04X\n", opcode, instruction_address)
 		cycles = 0
@@ -607,4 +620,110 @@ cpu_ld_a_r16mem :: proc(cpu: ^Cpu, bus: ^Bus, dest: R16_mem) {
 		cpu.a = bus_read_byte(bus, address)
 		cpu_set_r16(cpu, .HL, address - 1)
 	}
+}
+
+cpu_execute_alu :: proc(cpu: ^Cpu, operation: u8, value: u8) {
+	switch operation {
+	case 0:
+		// add a, r8
+		cpu_add_a(cpu, value)
+	case 1:
+		// adc a, r8
+		cpu_adc_a(cpu, value)
+	case 2:
+		// sub a, r8
+		cpu_sub_a(cpu, value)
+	case 3:
+		// sbc a, r8
+		cpu_sbc_a(cpu, value)
+	case 4:
+		// and a, r8
+		cpu_and_a(cpu, value)
+	case 5:
+		// xor a, r8
+		cpu_xor_a(cpu, value)
+	case 6:
+		// or a, r8
+		cpu_or_a(cpu, value)
+	case 7:
+		// cp a, r8
+		cpu_cp_a(cpu, value)
+	}
+}
+
+cpu_add_a :: proc(cpu: ^Cpu, value: u8) {
+	a := cpu.a
+	result := u16(a) + u16(value)
+	cpu.a = u8(result)
+
+	cpu.f = 0
+	cpu_set_flag(cpu, FLAG_Z, cpu.a == 0)
+	cpu_set_flag(cpu, FLAG_H, u16(a & 0x0F) + u16(value & 0x0F) > 0x0F)
+	cpu_set_flag(cpu, FLAG_C, result > 0xFF)
+}
+
+cpu_adc_a :: proc(cpu: ^Cpu, value: u8) {
+	a := cpu.a
+	carry := u16(0)
+	if (cpu.f & FLAG_C) != 0 {
+		carry = 1
+	}
+	result := u16(a) + u16(value) + carry
+	cpu.a = u8(result)
+
+	cpu.f = 0
+	cpu_set_flag(cpu, FLAG_Z, cpu.a == 0)
+	cpu_set_flag(cpu, FLAG_H, u16(a & 0x0F) + u16(value & 0x0F) + carry > 0x0F)
+	cpu_set_flag(cpu, FLAG_C, result > 0xFF)
+}
+
+cpu_sub_a :: proc(cpu: ^Cpu, value: u8) {
+	a := cpu.a
+	cpu.a = a - value
+
+	cpu.f = FLAG_N
+	cpu_set_flag(cpu, FLAG_Z, cpu.a == 0)
+	cpu_set_flag(cpu, FLAG_H, (a & 0x0F) < (value & 0x0F))
+	cpu_set_flag(cpu, FLAG_C, a < value)
+}
+
+cpu_sbc_a :: proc(cpu: ^Cpu, value: u8) {
+	a := cpu.a
+	carry := u16(0)
+	if (cpu.f & FLAG_C) != 0 {
+		carry = 1
+	}
+	subtrahend := u16(value) + carry
+	cpu.a = u8(u16(a) - subtrahend)
+
+	cpu.f = FLAG_N
+	cpu_set_flag(cpu, FLAG_Z, cpu.a == 0)
+	cpu_set_flag(cpu, FLAG_H, u16(a & 0x0F) < u16(value & 0x0F) + carry)
+	cpu_set_flag(cpu, FLAG_C, u16(a) < subtrahend)
+}
+
+cpu_and_a :: proc(cpu: ^Cpu, value: u8) {
+	cpu.a = cpu.a & value
+	cpu.f = FLAG_H
+	cpu_set_flag(cpu, FLAG_Z, cpu.a == 0)
+}
+
+cpu_xor_a :: proc(cpu: ^Cpu, value: u8) {
+	cpu.a = cpu.a ~ value
+	cpu.f = 0
+	cpu_set_flag(cpu, FLAG_Z, cpu.a == 0)
+}
+
+cpu_or_a :: proc(cpu: ^Cpu, value: u8) {
+	cpu.a = cpu.a | value
+	cpu.f = 0
+	cpu_set_flag(cpu, FLAG_Z, cpu.a == 0)
+}
+
+cpu_cp_a :: proc(cpu: ^Cpu, value: u8) {
+	a := cpu.a
+	cpu.f = FLAG_N
+	cpu_set_flag(cpu, FLAG_Z, a == value)
+	cpu_set_flag(cpu, FLAG_H, (a & 0x0F) < (value & 0x0F))
+	cpu_set_flag(cpu, FLAG_C, a < value)
 }
