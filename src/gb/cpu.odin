@@ -91,6 +91,12 @@ Cpu_step :: proc(cpu: ^Cpu, bus: ^Bus) -> (cycles: int, ok: bool) {
 		cpu_ld_a_r16mem(cpu, bus, dest)
 		cycles = 2
 		ok = true
+	case 0x08:
+		// ld [imm16], sp
+		address := cpu_fetch_u16(cpu, bus)
+		bus_write_u16(bus, address, cpu.sp)
+		cycles = 5
+		ok = true
 	case:
 		fmt.printf("Unimplemented opcode 0x%02X at 0x%04X\n", opcode, instruction_address)
 		cycles = 0

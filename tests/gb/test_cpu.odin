@@ -706,3 +706,128 @@ test_ld_a_hld_reads_before_decrementing_hl :: proc(t: ^testing.T) {
 }
 
 
+// --- LD [imm16], SP opcode tests ---
+
+@(test)
+test_ld_imm16_sp_writes_sp_little_endian :: proc(t: ^testing.T) {
+	bus := make_test_bus([]u8{0x08, 0x00, 0xC0})
+	cpu := make_test_cpu()
+
+	cpu.sp = 0x1234
+	cpu.f = 0xB0
+
+	cycles, ok := gb.Cpu_step(&cpu, &bus)
+
+	testing.expect(t, ok, "Expected LD [imm16], SP to succeed")
+	testing.expect(
+		t,
+		gb.bus_read_byte(&bus, 0xC000) == 0x34,
+		"Expected low byte of SP at address 0xC000",
+	)
+	testing.expect(
+		t,
+		gb.bus_read_byte(&bus, 0xC001) == 0x12,
+		"Expected high byte of SP at address 0xC001",
+	)
+	testing.expect(t, cpu.sp == 0x1234, "Expected SP to remain unchanged")
+	testing.expect(t, cpu.f == 0xB0, "Expected flags to remain unchanged")
+	testing.expect(t, cpu.pc == 0x0103, "Expected PC to advance by 3")
+	testing.expect(t, cycles == 5, "Expected LD [imm16], SP to take 5 cycles")
+}
+
+@(test)
+test_ld_imm16_sp_handles_zero_low_byte :: proc(t: ^testing.T) {
+	bus := make_test_bus([]u8{0x08, 0x10, 0xC0})
+	cpu := make_test_cpu()
+
+	cpu.sp = 0xFF00
+
+	cycles, ok := gb.Cpu_step(&cpu, &bus)
+
+	testing.expect(t, ok, "Expected LD [imm16], SP to succeed")
+	testing.expect(
+		t,
+		gb.bus_read_byte(&bus, 0xC010) == 0x00,
+		"Expected low byte 0x00 at the target address",
+	)
+	testing.expect(
+		t,
+		gb.bus_read_byte(&bus, 0xC011) == 0xFF,
+		"Expected high byte 0xFF at the next address",
+	)
+	testing.expect(t, cpu.pc == 0x0103, "Expected PC to advance by 3")
+	testing.expect(t, cycles == 5, "Expected LD [imm16], SP to take 5 cycles")
+}
+
+@(test)
+test_ld_imm16_sp_handles_zero_high_byte :: proc(t: ^testing.T) {
+	bus := make_test_bus([]u8{0x08, 0x20, 0xC0})
+	cpu := make_test_cpu()
+
+	cpu.sp = 0x00FF
+
+	cycles, ok := gb.Cpu_step(&cpu, &bus)
+
+	testing.expect(t, ok, "Expected LD [imm16], SP to succeed")
+	testing.expect(
+		t,
+		gb.bus_read_byte(&bus, 0xC020) == 0xFF,
+		"Expected low byte 0xFF at the target address",
+	)
+	testing.expect(
+		t,
+		gb.bus_read_byte(&bus, 0xC021) == 0x00,
+		"Expected high byte 0x00 at the next address",
+	)
+	testing.expect(t, cpu.pc == 0x0103, "Expected PC to advance by 3")
+	testing.expect(t, cycles == 5, "Expected LD [imm16], SP to take 5 cycles")
+}
+
+@(test)
+test_ld_imm16_sp_writes_to_consecutive_addresses :: proc(t: ^testing.T) {
+	bus := make_test_bus([]u8{0x08, 0xFF, 0xC0})
+	cpu := make_test_cpu()
+
+	cpu.sp = 0xABCD
+
+	cycles, ok := gb.Cpu_step(&cpu, &bus)
+
+	testing.expect(t, ok, "Expected LD [imm16], SP to succeed")
+	testing.expect(
+		t,
+		gb.bus_read_byte(&bus, 0xC0FF) == 0xCD,
+		"Expected low byte at the exact immediate address",
+	)
+	testing.expect(
+		t,
+		gb.bus_read_byte(&bus, 0xC100) == 0xAB,
+		"Expected high byte at the following address",
+	)
+	testing.expect(t, cycles == 5, "Expected LD [imm16], SP to take 5 cycles")
+}
+
+@(test)
+test_ld_imm16_sp_wraps_second_write_from_ffff_to_0000 :: proc(t: ^testing.T) {
+	bus := make_test_bus([]u8{0x08, 0xFF, 0xFF})
+	cpu := make_test_cpu()
+
+	cpu.sp = 0x1234
+
+	cycles, ok := gb.Cpu_step(&cpu, &bus)
+
+	testing.expect(t, ok, "Expected LD [imm16], SP to succeed")
+	testing.expect(
+		t,
+		gb.bus_read_byte(&bus, 0xFFFF) == 0x34,
+		"Expected low byte of SP at address 0xFFFF",
+	)
+	testing.expect(
+		t,
+		gb.bus_read_byte(&bus, 0x0000) == 0x12,
+		"Expected high byte of SP to wrap to address 0x0000",
+	)
+	testing.expect(t, cpu.pc == 0x0103, "Expected PC to advance by 3")
+	testing.expect(t, cycles == 5, "Expected LD [imm16], SP to take 5 cycles")
+}
+
+
