@@ -40,4 +40,3 @@ test_bus_write_u16_wraps_at_end_of_address_space :: proc(t: ^testing.T) {
 		"Expected high byte to wrap to address 0x0000",
 	)
 }
-

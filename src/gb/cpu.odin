@@ -608,4 +608,3 @@ cpu_ld_a_r16mem :: proc(cpu: ^Cpu, bus: ^Bus, dest: R16_mem) {
 		cpu_set_r16(cpu, .HL, address - 1)
 	}
 }
-

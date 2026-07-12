@@ -34,4 +34,3 @@ bus_read_u16_le :: proc(bus: ^Bus, address: u16) -> u16 {
 
 	return low | high << 8
 }
-

@@ -26,8 +26,8 @@ main :: proc() {
 
 	for i := 0; i < 3; i += 1 {
 		_, ok := gb.Cpu_step(&cpu, &bus)
-        if !ok {
-            break;
-        }
+		if !ok {
+			break
+		}
 	}
 }
