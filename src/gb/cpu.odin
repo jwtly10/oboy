@@ -85,6 +85,12 @@ Cpu_step :: proc(cpu: ^Cpu, bus: ^Bus) -> (cycles: int, ok: bool) {
 		cpu_ld_r16mem_a(cpu, bus, dest)
 		cycles = 2
 		ok = true
+	case 0x0A, 0x1A, 0x2A, 0x3A:
+		// ld a, [r16mem]
+		dest := R16_mem((opcode >> 4) & 0b11)
+		cpu_ld_a_r16mem(cpu, bus, dest)
+		cycles = 2
+		ok = true
 	case:
 		fmt.printf("Unimplemented opcode 0x%02X at 0x%04X\n", opcode, instruction_address)
 		cycles = 0
@@ -155,6 +161,7 @@ cpu_get_hl :: proc(cpu: ^Cpu) -> u16 {
 	return (u16(cpu.h) << 8) | u16(cpu.l)
 }
 
+// Set R16 reg specified value
 cpu_set_r16 :: proc(cpu: ^Cpu, r_idx: R16, value: u16) {
 	switch r_idx {
 	case .BC:
@@ -171,7 +178,8 @@ cpu_set_r16 :: proc(cpu: ^Cpu, r_idx: R16, value: u16) {
 	}
 }
 
-
+// Stores the contents of register A in the memory location specified by register pair R16_mem.
+// If HL reg, increment or decrement
 cpu_ld_r16mem_a :: proc(cpu: ^Cpu, bus: ^Bus, r_idx: R16_mem) {
 	switch r_idx {
 	case .BC:
@@ -185,6 +193,24 @@ cpu_ld_r16mem_a :: proc(cpu: ^Cpu, bus: ^Bus, r_idx: R16_mem) {
 	case .HLD:
 		address := cpu_get_hl(cpu)
 		bus_write_byte(bus, address, cpu.a)
+		cpu_set_r16(cpu, .HL, address - 1)
+	}
+}
+
+// Loads the 8-bit contents of memory specified by register pair R16_mem into register A.
+cpu_ld_a_r16mem :: proc(cpu: ^Cpu, bus: ^Bus, r_idx: R16_mem) {
+	switch r_idx {
+	case .BC:
+		cpu.a = bus_read_byte(bus, cpu_get_bc(cpu))
+	case .DE:
+		cpu.a = bus_read_byte(bus, cpu_get_de(cpu))
+	case .HLI:
+		address := cpu_get_hl(cpu)
+		cpu.a = bus_read_byte(bus, address)
+		cpu_set_r16(cpu, .HL, address + 1)
+	case .HLD:
+		address := cpu_get_hl(cpu)
+		cpu.a = bus_read_byte(bus, address)
 		cpu_set_r16(cpu, .HL, address - 1)
 	}
 }

@@ -491,3 +491,218 @@ test_ld_hld_a_wraps_hl_from_0000_to_ffff :: proc(t: ^testing.T) {
 }
 
 
+// --- ld a, [r16mem] opcode tests ---
+
+@(test)
+test_ld_a_bc_reads_memory_at_bc_into_a :: proc(t: ^testing.T) {
+	bus := make_test_bus([]u8{0x0A})
+	cpu := make_test_cpu()
+	cpu.a = 0x00
+	cpu.b = 0xC1
+	cpu.c = 0x23
+
+	// Writing 0x42 to BC
+	gb.bus_write_byte(&bus, 0xC123, 0x42)
+
+	cycles, ok := gb.Cpu_step(&cpu, &bus)
+
+	testing.expect(t, ok, "Expected LD a, [BC] to succeed")
+	testing.expect(t, cpu.a == 0x42, "Expected memory at A to contain BC")
+	testing.expect(t, gb.cpu_get_bc(&cpu) == 0xC123, "Expected BC to remain unchanged")
+	testing.expect(t, cpu.pc == 0x0101, "Expected PC to advance by 1")
+	testing.expect(t, cycles == 2, "Expected LD A, [BC] to take 2 cycles")
+}
+
+@(test)
+test_ld_a_de_reads_memory_at_de_into_a :: proc(t: ^testing.T) {
+	bus := make_test_bus([]u8{0x1A})
+	cpu := make_test_cpu()
+
+	cpu.a = 0x00
+	cpu.d = 0xC2
+	cpu.e = 0x34
+	cpu.f = 0xB0
+
+	gb.bus_write_byte(&bus, 0xC234, 0x99)
+
+	cycles, ok := gb.Cpu_step(&cpu, &bus)
+
+	testing.expect(t, ok, "Expected LD A, [DE] to succeed")
+	testing.expect(t, cpu.a == 0x99, "Expected A to contain the byte read from memory at DE")
+	testing.expect(t, gb.cpu_get_de(&cpu) == 0xC234, "Expected DE to remain unchanged")
+	testing.expect(t, cpu.f == 0xB0, "Expected flags to remain unchanged")
+	testing.expect(t, cpu.pc == 0x0101, "Expected PC to advance by 1")
+	testing.expect(t, cycles == 2, "Expected LD A, [DE] to take 2 cycles")
+}
+
+@(test)
+test_ld_a_hli_reads_memory_at_hl_into_a_then_increments_hl :: proc(t: ^testing.T) {
+	bus := make_test_bus([]u8{0x2A})
+	cpu := make_test_cpu()
+
+	cpu.a = 0x00
+	cpu.h = 0xC3
+	cpu.l = 0x45
+	cpu.f = 0xB0
+
+	gb.bus_write_byte(&bus, 0xC345, 0x77)
+
+	cycles, ok := gb.Cpu_step(&cpu, &bus)
+
+	testing.expect(t, ok, "Expected LD A, [HL+] to succeed")
+	testing.expect(
+		t,
+		cpu.a == 0x77,
+		"Expected A to contain the byte read from the original HL address",
+	)
+	testing.expect(t, gb.cpu_get_hl(&cpu) == 0xC346, "Expected HL to increment after the read")
+	testing.expect(t, cpu.f == 0xB0, "Expected flags to remain unchanged")
+	testing.expect(t, cpu.pc == 0x0101, "Expected PC to advance by 1")
+	testing.expect(t, cycles == 2, "Expected LD A, [HL+] to take 2 cycles")
+}
+
+@(test)
+test_ld_a_hld_reads_memory_at_hl_into_a_then_decrements_hl :: proc(t: ^testing.T) {
+	bus := make_test_bus([]u8{0x3A})
+	cpu := make_test_cpu()
+
+	cpu.a = 0x00
+	cpu.h = 0xC4
+	cpu.l = 0x56
+	cpu.f = 0xB0
+
+	gb.bus_write_byte(&bus, 0xC456, 0x55)
+
+	cycles, ok := gb.Cpu_step(&cpu, &bus)
+
+	testing.expect(t, ok, "Expected LD A, [HL-] to succeed")
+	testing.expect(
+		t,
+		cpu.a == 0x55,
+		"Expected A to contain the byte read from the original HL address",
+	)
+	testing.expect(t, gb.cpu_get_hl(&cpu) == 0xC455, "Expected HL to decrement after the read")
+	testing.expect(t, cpu.f == 0xB0, "Expected flags to remain unchanged")
+	testing.expect(t, cpu.pc == 0x0101, "Expected PC to advance by 1")
+	testing.expect(t, cycles == 2, "Expected LD A, [HL-] to take 2 cycles")
+}
+
+@(test)
+test_ld_a_bc_can_load_zero :: proc(t: ^testing.T) {
+	bus := make_test_bus([]u8{0x0A})
+	cpu := make_test_cpu()
+
+	cpu.a = 0xFF
+	cpu.b = 0xC0
+	cpu.c = 0x10
+
+	gb.bus_write_byte(&bus, 0xC010, 0x00)
+
+	cycles, ok := gb.Cpu_step(&cpu, &bus)
+
+	testing.expect(t, ok, "Expected LD A, [BC] to succeed")
+	testing.expect(t, cpu.a == 0x00, "Expected A to load 0x00 from memory")
+	testing.expect(t, gb.cpu_get_bc(&cpu) == 0xC010, "Expected BC to remain unchanged")
+	testing.expect(t, cpu.pc == 0x0101, "Expected PC to advance by 1")
+	testing.expect(t, cycles == 2, "Expected LD A, [BC] to take 2 cycles")
+}
+
+@(test)
+test_ld_a_de_can_load_ff :: proc(t: ^testing.T) {
+	bus := make_test_bus([]u8{0x1A})
+	cpu := make_test_cpu()
+
+	cpu.a = 0x00
+	cpu.d = 0xC0
+	cpu.e = 0x20
+
+	gb.bus_write_byte(&bus, 0xC020, 0xFF)
+
+	cycles, ok := gb.Cpu_step(&cpu, &bus)
+
+	testing.expect(t, ok, "Expected LD A, [DE] to succeed")
+	testing.expect(t, cpu.a == 0xFF, "Expected A to load 0xFF from memory")
+	testing.expect(t, gb.cpu_get_de(&cpu) == 0xC020, "Expected DE to remain unchanged")
+	testing.expect(t, cpu.pc == 0x0101, "Expected PC to advance by 1")
+	testing.expect(t, cycles == 2, "Expected LD A, [DE] to take 2 cycles")
+}
+
+@(test)
+test_ld_a_hli_wraps_hl_from_ffff_to_0000 :: proc(t: ^testing.T) {
+	bus := make_test_bus([]u8{0x2A})
+	cpu := make_test_cpu()
+
+	cpu.a = 0x00
+	cpu.h = 0xFF
+	cpu.l = 0xFF
+
+	gb.bus_write_byte(&bus, 0xFFFF, 0xAA)
+
+	cycles, ok := gb.Cpu_step(&cpu, &bus)
+
+	testing.expect(t, ok, "Expected LD A, [HL+] to succeed")
+	testing.expect(t, cpu.a == 0xAA, "Expected A to contain the byte read from address 0xFFFF")
+	testing.expect(t, gb.cpu_get_hl(&cpu) == 0x0000, "Expected HL to wrap from 0xFFFF to 0x0000")
+	testing.expect(t, cpu.pc == 0x0101, "Expected PC to advance by 1")
+	testing.expect(t, cycles == 2, "Expected LD A, [HL+] to take 2 cycles")
+}
+
+@(test)
+test_ld_a_hld_wraps_hl_from_0000_to_ffff :: proc(t: ^testing.T) {
+	bus := make_test_bus([]u8{0x3A})
+	cpu := make_test_cpu()
+
+	cpu.a = 0x00
+	cpu.h = 0x00
+	cpu.l = 0x00
+
+	gb.bus_write_byte(&bus, 0x0000, 0xBB)
+
+	cycles, ok := gb.Cpu_step(&cpu, &bus)
+
+	testing.expect(t, ok, "Expected LD A, [HL-] to succeed")
+	testing.expect(t, cpu.a == 0xBB, "Expected A to contain the byte read from address 0x0000")
+	testing.expect(t, gb.cpu_get_hl(&cpu) == 0xFFFF, "Expected HL to wrap from 0x0000 to 0xFFFF")
+	testing.expect(t, cpu.pc == 0x0101, "Expected PC to advance by 1")
+	testing.expect(t, cycles == 2, "Expected LD A, [HL-] to take 2 cycles")
+}
+
+@(test)
+test_ld_a_hli_reads_before_incrementing_hl :: proc(t: ^testing.T) {
+	bus := make_test_bus([]u8{0x2A})
+	cpu := make_test_cpu()
+
+	cpu.h = 0xC5
+	cpu.l = 0x00
+
+	gb.bus_write_byte(&bus, 0xC500, 0x12)
+	gb.bus_write_byte(&bus, 0xC501, 0x34)
+
+	cycles, ok := gb.Cpu_step(&cpu, &bus)
+
+	testing.expect(t, ok, "Expected LD A, [HL+] to succeed")
+	testing.expect(t, cpu.a == 0x12, "Expected A to read from HL before HL increments")
+	testing.expect(t, gb.cpu_get_hl(&cpu) == 0xC501, "Expected HL to increment after the read")
+	testing.expect(t, cycles == 2, "Expected LD A, [HL+] to take 2 cycles")
+}
+
+@(test)
+test_ld_a_hld_reads_before_decrementing_hl :: proc(t: ^testing.T) {
+	bus := make_test_bus([]u8{0x3A})
+	cpu := make_test_cpu()
+
+	cpu.h = 0xC5
+	cpu.l = 0x01
+
+	gb.bus_write_byte(&bus, 0xC501, 0x12)
+	gb.bus_write_byte(&bus, 0xC500, 0x34)
+
+	cycles, ok := gb.Cpu_step(&cpu, &bus)
+
+	testing.expect(t, ok, "Expected LD A, [HL-] to succeed")
+	testing.expect(t, cpu.a == 0x12, "Expected A to read from HL before HL decrements")
+	testing.expect(t, gb.cpu_get_hl(&cpu) == 0xC500, "Expected HL to decrement after the read")
+	testing.expect(t, cycles == 2, "Expected LD A, [HL-] to take 2 cycles")
+}
+
+
