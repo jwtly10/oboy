@@ -627,14 +627,12 @@ test_ld_a_hli_wraps_hl_from_ffff_to_0000 :: proc(t: ^testing.T) {
 
 @(test)
 test_ld_a_hld_wraps_hl_from_0000_to_ffff :: proc(t: ^testing.T) {
-	bus := make_test_bus([]u8{0x3A})
+	bus := make_test_bus_with_rom([]u8{0x3A}, []Test_Rom_Byte{{0x0000, 0xBB}})
 	cpu := make_test_cpu()
 
 	cpu.a = 0x00
 	cpu.h = 0x00
 	cpu.l = 0x00
-
-	bus.cartridge.rom[0x0000] = 0xBB
 
 	cycles, ok := gb.Cpu_step(&cpu, &bus)
 
@@ -1417,7 +1415,7 @@ test_jr_applies_positive_zero_and_negative_offsets_from_end_of_instruction :: pr
 
 @(test)
 test_jr_wraps_pc_across_both_ends_of_address_space :: proc(t: ^testing.T) {
-	bus := make_test_bus([]u8{})
+	bus := make_test_bus_with_rom([]u8{}, []Test_Rom_Byte{{0x0000, 0x18}, {0x0001, 0xFD}})
 	gb.bus_write_byte(&bus, 0xFFFE, 0x18)
 	gb.bus_write_byte(&bus, 0xFFFF, 0x01)
 	cpu := make_test_cpu()
@@ -1431,8 +1429,6 @@ test_jr_wraps_pc_across_both_ends_of_address_space :: proc(t: ^testing.T) {
 	testing.expect(t, cpu.f == 0x10, "Expected wrapping JR to preserve flags")
 	testing.expect(t, cycles == 3, "Expected wrapping JR to take 3 cycles")
 
-	bus.cartridge.rom[0x0000] = 0x18
-	bus.cartridge.rom[0x0001] = 0xFD
 	cpu.pc = 0x0000
 	cpu.f = 0xE0
 
@@ -2007,12 +2003,11 @@ test_or_a_imm8_sets_zero_and_clears_other_flags :: proc(t: ^testing.T) {
 
 @(test)
 test_alu_imm8_fetch_wraps_across_end_of_address_space :: proc(t: ^testing.T) {
-	bus := make_test_bus([]u8{})
+	bus := make_test_bus_with_rom([]u8{}, []Test_Rom_Byte{{0x0000, 0x02}})
 	cpu := make_test_cpu()
 	cpu.pc = 0xFFFF
 	cpu.a = 0x01
 	gb.bus_write_byte(&bus, 0xFFFF, 0xC6)
-	bus.cartridge.rom[0x0000] = 0x02
 
 	cycles, ok := gb.Cpu_step(&cpu, &bus)
 
@@ -2164,13 +2159,12 @@ test_conditional_ret_jp_and_call_cover_all_conditions :: proc(t: ^testing.T) {
 test_ret_and_reti_pop_pc_and_reti_enables_interrupts :: proc(t: ^testing.T) {
 	opcodes := [2]u8{0xC9, 0xD9}
 	for opcode in opcodes {
-		bus := make_test_bus([]u8{opcode})
+		bus := make_test_bus_with_rom([]u8{opcode}, []Test_Rom_Byte{{0x0000, 0xAB}})
 		cpu := make_test_cpu()
 		cpu.sp = 0xFFFF
 		cpu.f = 0xB0
 		cpu.ime = false
 		gb.bus_write_byte(&bus, 0xFFFF, 0xCD)
-		bus.cartridge.rom[0x0000] = 0xAB
 
 		cycles, ok := gb.Cpu_step(&cpu, &bus)
 
@@ -2306,11 +2300,10 @@ test_pop_r16stk_covers_all_register_pairs :: proc(t: ^testing.T) {
 
 @(test)
 test_pop_r16stk_wraps_stack_pointer :: proc(t: ^testing.T) {
-	bus := make_test_bus([]u8{0xE1})
+	bus := make_test_bus_with_rom([]u8{0xE1}, []Test_Rom_Byte{{0x0000, 0x12}})
 	cpu := make_test_cpu()
 	cpu.sp = 0xFFFF
 	gb.bus_write_byte(&bus, 0xFFFF, 0x34)
-	bus.cartridge.rom[0x0000] = 0x12
 
 	cycles, ok := gb.Cpu_step(&cpu, &bus)
 

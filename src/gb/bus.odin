@@ -11,16 +11,17 @@ Bus :: struct {
 	ie:        u8, // Interrupt Enable register
 }
 
-Cartridge :: struct {
-	rom: []u8,
-	ram: []u8, // External cartridge RAM
-	// TODO: split banks
+Bus_init :: proc(rom: []u8, header: ^ROM_Header, allocator := context.allocator) -> (Bus, bool) {
+	cartridge, ok := Cartridge_init(rom, header, allocator)
+	if !ok {
+		return {}, false
+	}
+
+	return Bus{cartridge = cartridge}, true
 }
 
-Bus_init :: proc(rom: []u8) -> Bus {
-	bus: Bus
-	bus.cartridge.rom = rom
-	return bus
+Bus_destroy :: proc(bus: ^Bus, allocator := context.allocator) {
+	Cartridge_destroy(&bus.cartridge, allocator)
 }
 
 bus_read_byte :: proc(bus: ^Bus, address: u16) -> u8 {
@@ -85,28 +86,4 @@ bus_read_u16_le :: proc(bus: ^Bus, address: u16) -> u16 {
 	high := u16(bus_read_byte(bus, address + 1))
 
 	return low | high << 8
-}
-
-cartridge_read :: proc(cartridge: ^Cartridge, address: u16) -> u8 {
-	index := int(address)
-
-	if index >= len(cartridge.rom) {
-		return 0xFF
-	}
-
-	return cartridge.rom[index]
-}
-
-cartridge_read_ram :: proc(cartridge: ^Cartridge, address: u16) -> u8 {
-	// TODO
-	return 0xFF
-}
-
-cartridge_write :: proc(cartridge: ^Cartridge, address: u16, value: u8) {
-	// Writes can't modify ROM
-	// MBC cartridges will interpret writes as controller cmds
-}
-
-cartridge_write_ram :: proc(cartridge: ^Cartridge, address: u16, value: u8) {
-	// Not implemented yet
 }

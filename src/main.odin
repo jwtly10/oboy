@@ -21,7 +21,12 @@ main :: proc() {
 	}
 	gb.Print_rom_header(&header)
 
-	bus := gb.Bus_init(rom)
+	bus, ok := gb.Bus_init(rom, &header)
+	if !ok {
+		fmt.println("Could not initialise bus")
+		return
+	}
+	defer gb.Bus_destroy(&bus)
 	cpu := gb.Cpu_init_post_boot()
 
 	for i := 0; i < 3; i += 1 {
