@@ -50,8 +50,17 @@ Parse_rom_header :: proc(rom: []u8) -> (ROM_Header, bool) {
 		title_end = CGB_FLAG
 	}
 
+    // Title may end with null bytes
+    title_bytes := rom[TITLE_START:title_end]
+    title_len:=0
+    for byte in title_bytes {
+        if byte != 0 {
+            title_len += 1
+        }
+    }
+
 	header := ROM_Header {
-		title             = string(rom[TITLE_START:title_end]),
+		title             = string(title_bytes[0:title_len]),
 		cgb_flag          = cgb_flag,
 		sgb_flag          = rom[SGB_FEATURES],
 		cartridge_type    = rom[CARTRIDGE_TYPE],
