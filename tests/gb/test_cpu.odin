@@ -949,3 +949,194 @@ test_add_hl_r16_preserves_zero_and_clears_other_stale_flags :: proc(t: ^testing.
 	expect_add_hl_r16(t, 0x39, .SP, 0x1000, 0x0001, 0x1001, 0xF0, 0x80)
 }
 
+// --- inc r8 and dec r8 opcode tests ---
+
+set_r8_operand :: proc(cpu: ^gb.Cpu, bus: ^gb.Bus, reg: gb.R8, value: u8) {
+	switch reg {
+	case .B:
+		cpu.b = value
+	case .C:
+		cpu.c = value
+	case .D:
+		cpu.d = value
+	case .E:
+		cpu.e = value
+	case .H:
+		cpu.h = value
+	case .L:
+		cpu.l = value
+	case .HL_INDIRECT:
+		gb.bus_write_byte(bus, gb.cpu_get_hl(cpu), value)
+	case .A:
+		cpu.a = value
+	}
+}
+
+get_r8_operand :: proc(cpu: ^gb.Cpu, bus: ^gb.Bus, reg: gb.R8) -> u8 {
+	switch reg {
+	case .B:
+		return cpu.b
+	case .C:
+		return cpu.c
+	case .D:
+		return cpu.d
+	case .E:
+		return cpu.e
+	case .H:
+		return cpu.h
+	case .L:
+		return cpu.l
+	case .HL_INDIRECT:
+		return gb.bus_read_byte(bus, gb.cpu_get_hl(cpu))
+	case .A:
+		return cpu.a
+	}
+	return 0
+}
+
+expect_inc_r8 :: proc(
+	t: ^testing.T,
+	opcode: u8,
+	reg: gb.R8,
+	initial, expected, initial_flags, expected_flags: u8,
+) {
+	bus := make_test_bus([]u8{opcode})
+	cpu := make_test_cpu()
+	cpu.a = 0xA1
+	cpu.b = 0xB2
+	cpu.c = 0xC3
+	cpu.d = 0xD4
+	cpu.e = 0xE5
+	cpu.h = 0xC1
+	cpu.l = 0x20
+	cpu.sp = 0xFEDC
+	cpu.f = initial_flags
+	set_r8_operand(&cpu, &bus, reg, initial)
+
+	cycles, ok := gb.Cpu_step(&cpu, &bus)
+
+	testing.expect(t, ok, "Expected INC r8 opcode to succeed")
+	testing.expect(
+		t,
+		get_r8_operand(&cpu, &bus, reg) == expected,
+		"Expected INC r8 to increment its operand",
+	)
+	testing.expect(t, cpu.f == expected_flags, "Expected INC r8 to set Z, N, and H and preserve C")
+	testing.expect(t, cpu.pc == 0x0101, "Expected INC r8 to advance PC by 1")
+	expected_cycles := 1
+	if reg == .HL_INDIRECT {
+		expected_cycles = 3
+	}
+	testing.expect(
+		t,
+		cycles == expected_cycles,
+		"Expected INC r8 to use the operand-specific cycle count",
+	)
+	testing.expect(t, cpu.sp == 0xFEDC, "Expected INC r8 to leave SP unchanged")
+	if reg != .HL_INDIRECT && reg != .H && reg != .L {
+		testing.expect(t, gb.cpu_get_hl(&cpu) == 0xC120, "Expected INC r8 to leave HL unchanged")
+	}
+}
+
+@(test)
+test_inc_r8_all_operands :: proc(t: ^testing.T) {
+	expect_inc_r8(t, 0x04, .B, 0x21, 0x22, 0x10, 0x10)
+	expect_inc_r8(t, 0x0C, .C, 0x32, 0x33, 0x10, 0x10)
+	expect_inc_r8(t, 0x14, .D, 0x43, 0x44, 0x10, 0x10)
+	expect_inc_r8(t, 0x1C, .E, 0x54, 0x55, 0x10, 0x10)
+	expect_inc_r8(t, 0x24, .H, 0x65, 0x66, 0x10, 0x10)
+	expect_inc_r8(t, 0x2C, .L, 0x76, 0x77, 0x10, 0x10)
+	expect_inc_r8(t, 0x34, .HL_INDIRECT, 0x87, 0x88, 0x10, 0x10)
+	expect_inc_r8(t, 0x3C, .A, 0x98, 0x99, 0x10, 0x10)
+}
+
+@(test)
+test_inc_r8_wraps_sets_zero_and_half_carry_and_preserves_carry :: proc(t: ^testing.T) {
+	expect_inc_r8(t, 0x04, .B, 0xFF, 0x00, 0x50, 0xB0)
+}
+
+@(test)
+test_inc_r8_sets_half_carry_without_zero_and_preserves_clear_carry :: proc(t: ^testing.T) {
+	expect_inc_r8(t, 0x04, .B, 0x0F, 0x10, 0xC0, 0x20)
+}
+
+@(test)
+test_inc_r8_clears_stale_flags_and_lower_flag_nibble :: proc(t: ^testing.T) {
+	expect_inc_r8(t, 0x04, .B, 0x01, 0x02, 0xEF, 0x00)
+}
+
+expect_dec_r8 :: proc(
+	t: ^testing.T,
+	opcode: u8,
+	reg: gb.R8,
+	initial, expected, initial_flags, expected_flags: u8,
+) {
+	bus := make_test_bus([]u8{opcode})
+	cpu := make_test_cpu()
+	cpu.a = 0xA1
+	cpu.b = 0xB2
+	cpu.c = 0xC3
+	cpu.d = 0xD4
+	cpu.e = 0xE5
+	cpu.h = 0xC1
+	cpu.l = 0x20
+	cpu.sp = 0xFEDC
+	cpu.f = initial_flags
+	set_r8_operand(&cpu, &bus, reg, initial)
+
+	cycles, ok := gb.Cpu_step(&cpu, &bus)
+
+	testing.expect(t, ok, "Expected DEC r8 opcode to succeed")
+	testing.expect(
+		t,
+		get_r8_operand(&cpu, &bus, reg) == expected,
+		"Expected DEC r8 to decrement its operand",
+	)
+	testing.expect(t, cpu.f == expected_flags, "Expected DEC r8 to set Z, N, and H and preserve C")
+	testing.expect(t, cpu.pc == 0x0101, "Expected DEC r8 to advance PC by 1")
+	expected_cycles := 1
+	if reg == .HL_INDIRECT {
+		expected_cycles = 3
+	}
+	testing.expect(
+		t,
+		cycles == expected_cycles,
+		"Expected DEC r8 to use the operand-specific cycle count",
+	)
+	testing.expect(t, cpu.sp == 0xFEDC, "Expected DEC r8 to leave SP unchanged")
+	if reg != .HL_INDIRECT && reg != .H && reg != .L {
+		testing.expect(t, gb.cpu_get_hl(&cpu) == 0xC120, "Expected DEC r8 to leave HL unchanged")
+	}
+}
+
+@(test)
+test_dec_r8_all_operands :: proc(t: ^testing.T) {
+	expect_dec_r8(t, 0x05, .B, 0x22, 0x21, 0x10, 0x50)
+	expect_dec_r8(t, 0x0D, .C, 0x33, 0x32, 0x10, 0x50)
+	expect_dec_r8(t, 0x15, .D, 0x44, 0x43, 0x10, 0x50)
+	expect_dec_r8(t, 0x1D, .E, 0x55, 0x54, 0x10, 0x50)
+	expect_dec_r8(t, 0x25, .H, 0x66, 0x65, 0x10, 0x50)
+	expect_dec_r8(t, 0x2D, .L, 0x77, 0x76, 0x10, 0x50)
+	expect_dec_r8(t, 0x35, .HL_INDIRECT, 0x88, 0x87, 0x10, 0x50)
+	expect_dec_r8(t, 0x3D, .A, 0x99, 0x98, 0x10, 0x50)
+}
+
+@(test)
+test_dec_r8_to_zero_sets_zero_without_half_carry_and_preserves_carry :: proc(t: ^testing.T) {
+	expect_dec_r8(t, 0x05, .B, 0x01, 0x00, 0x10, 0xD0)
+}
+
+@(test)
+test_dec_r8_wraps_and_sets_half_carry_with_clear_carry :: proc(t: ^testing.T) {
+	expect_dec_r8(t, 0x05, .B, 0x00, 0xFF, 0x80, 0x60)
+}
+
+@(test)
+test_dec_r8_borrows_from_bit_four_and_clears_stale_zero :: proc(t: ^testing.T) {
+	expect_dec_r8(t, 0x05, .B, 0x10, 0x0F, 0x90, 0x70)
+}
+
+@(test)
+test_dec_r8_clears_stale_half_carry_and_lower_flag_nibble :: proc(t: ^testing.T) {
+	expect_dec_r8(t, 0x05, .B, 0x02, 0x01, 0xAF, 0x40)
+}

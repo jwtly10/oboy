@@ -24,6 +24,17 @@ Cpu :: struct {
 	trace: bool,
 }
 
+R8 :: enum {
+	B,
+	C,
+	D,
+	E,
+	H,
+	L,
+	HL_INDIRECT,
+	A,
+}
+
 R16 :: enum {
 	BC,
 	DE,
@@ -72,9 +83,10 @@ Cpu_step :: proc(cpu: ^Cpu, bus: ^Bus) -> (cycles: int, ok: bool) {
 	case 0x01, 0x11, 0x21, 0x31:
 		// ld r16, imm16
 		value := cpu_fetch_u16(cpu, bus)
-		// pulling the index of the opcode eg.
-		// ....0001 (0x01) >> 4 = ....0000 & ....0011 == 0b00 (index 0)
-		// 00110001 (0x31) >> 4 = 00000011 & 0b11 == 0b3 (index 3)
+		// pulling the index of the r16 opcode where 5/4 are the fixed dest bits
+		// we move to pos - 1 - 0 so we can create index
+		// eg. ....0001 (0x01) >> 4 = ....0000 & ....0011 == 0b00 (index 0)
+		//     00110001 (0x31) >> 4 = 00000011 & 0b11 == 0b3 (index 3)
 		dest := R16((opcode >> 4) & 0b11)
 		cpu_set_r16(cpu, dest, value)
 		cycles = 3
@@ -90,6 +102,30 @@ Cpu_step :: proc(cpu: ^Cpu, bus: ^Bus) -> (cycles: int, ok: bool) {
 		dest := R16((opcode >> 4) & 0b11)
 		cpu_inc_r16(cpu, dest)
 		cycles = 2
+		ok = true
+	case 0x04, 0x0C, 0x14, 0x1C, 0x24, 0x2C, 0x34, 0x3C:
+		// inc r8
+		r_idx := R8((opcode >> 3) & 0b111)
+		value := cpu_read_r8(cpu, bus, r_idx)
+		value = cpu_inc_r8(cpu, value)
+		cpu_write_r8(cpu, bus, r_idx, value)
+
+		cycles = 1
+		if r_idx == .HL_INDIRECT {
+			cycles = 3
+		}
+		ok = true
+	case 0x05, 0x0D, 0x15, 0x1D, 0x25, 0x2D, 0x35, 0x3D:
+		// dec r8
+		r_idx := R8((opcode >> 3) & 0b111)
+		value := cpu_read_r8(cpu, bus, r_idx)
+		value = cpu_dec_r8(cpu, value)
+		cpu_write_r8(cpu, bus, r_idx, value)
+
+		cycles = 1
+		if r_idx == .HL_INDIRECT {
+			cycles = 3
+		}
 		ok = true
 	case 0x0B, 0x1B, 0x2B, 0x3B:
 		// dec r16
@@ -147,6 +183,50 @@ cpu_fetch_u16 :: proc(cpu: ^Cpu, bus: ^Bus) -> u16 {
 	return low | (high << 8)
 }
 
+cpu_read_r8 :: proc(cpu: ^Cpu, bus: ^Bus, r_idx: R8) -> u8 {
+	switch r_idx {
+	case .B:
+		return cpu.b
+	case .C:
+		return cpu.c
+	case .D:
+		return cpu.d
+	case .E:
+		return cpu.e
+	case .H:
+		return cpu.h
+	case .L:
+		return cpu.l
+	case .HL_INDIRECT:
+		return bus_read_byte(bus, cpu_get_hl(cpu))
+	case .A:
+		return cpu.a
+	}
+
+	unreachable()
+}
+
+cpu_write_r8 :: proc(cpu: ^Cpu, bus: ^Bus, r_idx: R8, value: u8) {
+	switch r_idx {
+	case .B:
+		cpu.b = value
+	case .C:
+		cpu.c = value
+	case .D:
+		cpu.d = value
+	case .E:
+		cpu.e = value
+	case .H:
+		cpu.h = value
+	case .L:
+		cpu.l = value
+	case .HL_INDIRECT:
+		bus_write_byte(bus, cpu_get_hl(cpu), value)
+	case .A:
+		cpu.a = value
+	}
+}
+
 cpu_set_flag :: proc(cpu: ^Cpu, flag: u8, set: bool) {
 	if set {
 		cpu.f |= flag
@@ -183,6 +263,30 @@ cpu_get_de :: proc(cpu: ^Cpu) -> u16 {
 
 cpu_get_hl :: proc(cpu: ^Cpu) -> u16 {
 	return (u16(cpu.h) << 8) | u16(cpu.l)
+}
+
+// Increments the contents of register R8 by 1.
+cpu_inc_r8 :: proc(cpu: ^Cpu, value: u8) -> u8 {
+	result := value + 1
+
+	cpu_set_flag(cpu, FLAG_Z, result == 0)
+	cpu_set_flag(cpu, FLAG_N, false)
+	cpu_set_flag(cpu, FLAG_H, (value & 0x0F) == 0x0F)
+	// C is unchanged.
+
+	return result
+}
+
+// Decrements the contents of register R8 by 1.
+cpu_dec_r8 :: proc(cpu: ^Cpu, value: u8) -> u8 {
+	result := value - 1
+
+	cpu_set_flag(cpu, FLAG_Z, result == 0)
+	cpu_set_flag(cpu, FLAG_N, true)
+	cpu_set_flag(cpu, FLAG_H, (value & 0x0F) == 0x00)
+	// C is unchanged.
+
+	return result
 }
 
 // Increments the contents of register pair R16 by 1.
