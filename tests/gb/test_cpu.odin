@@ -2615,3 +2615,134 @@ test_di_cancels_pending_ei_enable :: proc(t: ^testing.T) {
 	testing.expect(t, !cpu.ime, "Expected DI to override and cancel delayed EI")
 	testing.expect(t, cpu.pc == 0x0103, "Expected all three instructions to execute")
 }
+
+// --- invalid and CB prefix opcode tests ---
+
+@(test)
+test_invalid_opcodes_hard_lock_cpu_without_fetching_again :: proc(t: ^testing.T) {
+	opcodes := [11]u8{0xD3, 0xDB, 0xDD, 0xE3, 0xE4, 0xEB, 0xEC, 0xED, 0xF4, 0xFC, 0xFD}
+	for opcode in opcodes {
+		bus := make_test_bus([]u8{opcode, 0x04})
+		cpu := make_test_cpu()
+		cpu.b = 0x12
+		cpu.f = 0xB0
+
+		first_cycles, first_ok := gb.Cpu_step(&cpu, &bus)
+		second_cycles, second_ok := gb.Cpu_step(&cpu, &bus)
+
+		testing.expect(t, first_ok && second_ok, "Expected invalid opcode lock to be handled")
+		testing.expect(t, cpu.locked, "Expected invalid opcode to permanently lock the CPU")
+		testing.expect(t, cpu.pc == 0x0101, "Expected locked CPU not to fetch another opcode")
+		testing.expect(t, cpu.b == 0x12, "Expected locked CPU not to execute another opcode")
+		testing.expect(t, cpu.f == 0xB0, "Expected invalid opcode to preserve flags")
+		testing.expect(
+			t,
+			first_cycles == 1 && second_cycles == 1,
+			"Expected locked CPU steps to consume 1 cycle",
+		)
+	}
+}
+
+@(test)
+test_cb_prefix_executes_all_register_and_memory_encodings :: proc(t: ^testing.T) {
+	for wide_opcode := 0; wide_opcode <= 0xFF; wide_opcode += 1 {
+		opcode := u8(wide_opcode)
+		bus := make_test_bus([]u8{0xCB, opcode})
+		cpu := make_test_cpu()
+		gb.cpu_set_r16(&cpu, .HL, 0xC123)
+		operand := gb.R8(opcode & 0b111)
+		initial := u8(0x81)
+		gb.cpu_write_r8(&cpu, &bus, operand, initial)
+		cpu.f = 0xD0 // Z, N, and C begin set.
+
+		group := opcode >> 6
+		index := (opcode >> 3) & 0b111
+		expected := initial
+		expected_flags := u8(0xD0)
+		if group == 0 {
+			carry := false
+			switch index {
+			case 0:
+				carry = true
+				expected = 0x03
+			case 1:
+				carry = true
+				expected = 0xC0
+			case 2:
+				carry = true
+				expected = 0x03
+			case 3:
+				carry = true
+				expected = 0xC0
+			case 4:
+				carry = true
+				expected = 0x02
+			case 5:
+				carry = true
+				expected = 0xC0
+			case 6:
+				expected = 0x18
+			case 7:
+				carry = true
+				expected = 0x40
+			}
+			expected_flags = 0
+			if carry {
+				expected_flags = 0x10
+			}
+		} else if group == 1 {
+			expected_flags = 0x30 // C preserved; N cleared; H set.
+			if (initial & (u8(1) << index)) == 0 {
+				expected_flags |= 0x80
+			}
+		} else if group == 2 {
+			expected = initial & ~(u8(1) << index)
+		} else {
+			expected = initial | (u8(1) << index)
+		}
+
+		cycles, ok := gb.Cpu_step(&cpu, &bus)
+		result := gb.cpu_read_r8(&cpu, &bus, operand)
+		expected_cycles := 2
+		if operand == .HL_INDIRECT {
+			expected_cycles = 4
+			if group == 1 {
+				expected_cycles = 3
+			}
+		}
+
+		testing.expect(t, ok, "Expected every CB-prefixed opcode to succeed")
+		testing.expect(t, result == expected, "Expected CB opcode result")
+		testing.expect(t, cpu.f == expected_flags, "Expected CB opcode flags")
+		testing.expect(t, cpu.pc == 0x0102, "Expected CB opcode to advance PC by 2")
+		testing.expect(t, cycles == expected_cycles, "Expected CB opcode cycle count")
+	}
+}
+
+@(test)
+test_cb_rotates_set_zero_and_use_both_carry_states :: proc(t: ^testing.T) {
+	cases := [?]struct {
+		opcode, initial, flags, expected, expected_flags: u8,
+	} {
+		{0x00, 0x00, 0xF0, 0x00, 0x80}, // RLC B produces zero and clears carry.
+		{0x10, 0x01, 0x00, 0x02, 0x00}, // RL B with carry clear.
+		{0x10, 0x00, 0x10, 0x01, 0x00}, // RL B with carry set.
+		{0x18, 0x02, 0x00, 0x01, 0x00}, // RR B with carry clear.
+		{0x18, 0x00, 0x10, 0x80, 0x00}, // RR B with carry set.
+	}
+
+	for test_case in cases {
+		bus := make_test_bus([]u8{0xCB, test_case.opcode})
+		cpu := make_test_cpu()
+		cpu.b = test_case.initial
+		cpu.f = test_case.flags
+
+		cycles, ok := gb.Cpu_step(&cpu, &bus)
+
+		testing.expect(t, ok, "Expected CB rotate to succeed")
+		testing.expect(t, cpu.b == test_case.expected, "Expected CB rotate result")
+		testing.expect(t, cpu.f == test_case.expected_flags, "Expected CB rotate flags")
+		testing.expect(t, cpu.pc == 0x0102, "Expected CB rotate to advance PC by 2")
+		testing.expect(t, cycles == 2, "Expected CB register rotate to take 2 cycles")
+	}
+}

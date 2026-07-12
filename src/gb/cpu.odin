@@ -23,6 +23,7 @@ Cpu :: struct {
 	pc:            u16,
 	stopped:       bool,
 	halted:        bool,
+	locked:        bool,
 	trace:         bool,
 	ime:           bool,
 	ime_scheduled: bool,
@@ -75,6 +76,11 @@ Cpu_step :: proc(cpu: ^Cpu, bus: ^Bus) -> (cycles: int, ok: bool) {
 		return 1, true
 	}
 
+	if cpu.locked {
+		// Invalid opcodes permanently lock the CPU until it is reinitialized.
+		return 1, true
+	}
+
 	if cpu.ime_scheduled {
 		cpu.ime = true
 		cpu.ime_scheduled = false
@@ -84,6 +90,24 @@ Cpu_step :: proc(cpu: ^Cpu, bus: ^Bus) -> (cycles: int, ok: bool) {
 	opcode := cpu_fetch_u8(cpu, bus)
 
 	switch opcode {
+	case 0xD3, 0xDB, 0xDD, 0xE3, 0xE4, 0xEB, 0xEC, 0xED, 0xF4, 0xFC, 0xFD:
+		// Unsupported op codes
+		cpu.locked = true
+		cycles = 1
+		ok = true
+	case 0xCB:
+		// CB 16 bit Opcodes
+		cb_opcode := cpu_fetch_u8(cpu, bus)
+		cpu_execute_cb(cpu, bus, cb_opcode)
+		operand := R8(cb_opcode & 0b111)
+		cycles = 2
+		if operand == .HL_INDIRECT {
+			cycles = 4
+			if cb_opcode >= 0x40 && cb_opcode <= 0x7F {
+				cycles = 3
+			}
+		}
+		ok = true
 	case 0x00:
 		// nop
 		cycles = 1
@@ -444,6 +468,74 @@ Cpu_step :: proc(cpu: ^Cpu, bus: ^Bus) -> (cycles: int, ok: bool) {
 	}
 
 	return cycles, ok
+}
+
+cpu_execute_cb :: proc(cpu: ^Cpu, bus: ^Bus, opcode: u8) {
+	operand := R8(opcode & 0b111)
+	value := cpu_read_r8(cpu, bus, operand)
+	group := opcode >> 6
+	index := (opcode >> 3) & 0b111
+
+	switch group {
+	case 0:
+		result := value
+		carry := false
+		switch index {
+		case 0:
+			// RLC
+			carry = (value & 0x80) != 0
+			result = (value << 1) | (value >> 7)
+		case 1:
+			// RRC
+			carry = (value & 0x01) != 0
+			result = (value >> 1) | (value << 7)
+		case 2:
+			// RL
+			carry = (value & 0x80) != 0
+			result = value << 1
+			if (cpu.f & FLAG_C) != 0 {
+				result |= 1
+			}
+		case 3:
+			// RR
+			carry = (value & 0x01) != 0
+			result = value >> 1
+			if (cpu.f & FLAG_C) != 0 {
+				result |= 0x80
+			}
+		case 4:
+			// SLA
+			carry = (value & 0x80) != 0
+			result = value << 1
+		case 5:
+			// SRA
+			carry = (value & 0x01) != 0
+			result = (value >> 1) | (value & 0x80)
+		case 6:
+			// SWAP
+			result = (value << 4) | (value >> 4)
+		case 7:
+			// SRL
+			carry = (value & 0x01) != 0
+			result = value >> 1
+		}
+
+		cpu_write_r8(cpu, bus, operand, result)
+		cpu.f = 0
+		cpu_set_flag(cpu, FLAG_Z, result == 0)
+		cpu_set_flag(cpu, FLAG_C, carry)
+	case 1:
+		// BIT
+		cpu_set_flag(cpu, FLAG_Z, (value & (u8(1) << index)) == 0)
+		cpu_set_flag(cpu, FLAG_N, false)
+		cpu_set_flag(cpu, FLAG_H, true)
+	case 2:
+		// RES
+		cpu_write_r8(cpu, bus, operand, value & ~(u8(1) << index))
+	case 3:
+		// SET
+		cpu_write_r8(cpu, bus, operand, value | (u8(1) << index))
+	}
 }
 
 cpu_rlca :: proc(cpu: ^Cpu) {
