@@ -462,8 +462,8 @@ test_ld_hld_a_wraps_hl_from_0000_to_ffff :: proc(t: ^testing.T) {
 	testing.expect(t, ok, "Expected LD [HL-], A to succeed")
 	testing.expect(
 		t,
-		gb.bus_read_byte(&bus, 0x0000) == 0xBB,
-		"Expected memory at 0x0000 to contain A",
+		gb.bus_read_byte(&bus, 0x0000) == 0x00,
+		"Expected a write to cartridge ROM at 0x0000 to be ignored",
 	)
 	testing.expect(t, gb.cpu_get_hl(&cpu) == 0xFFFF, "Expected HL to wrap to 0xFFFF")
 }
@@ -634,7 +634,7 @@ test_ld_a_hld_wraps_hl_from_0000_to_ffff :: proc(t: ^testing.T) {
 	cpu.h = 0x00
 	cpu.l = 0x00
 
-	gb.bus_write_byte(&bus, 0x0000, 0xBB)
+	bus.cartridge.rom[0x0000] = 0xBB
 
 	cycles, ok := gb.Cpu_step(&cpu, &bus)
 
@@ -801,8 +801,8 @@ test_ld_imm16_sp_wraps_second_write_from_ffff_to_0000 :: proc(t: ^testing.T) {
 	)
 	testing.expect(
 		t,
-		gb.bus_read_byte(&bus, 0x0000) == 0x12,
-		"Expected high byte of SP to wrap to address 0x0000",
+		gb.bus_read_byte(&bus, 0x0000) == 0x00,
+		"Expected the wrapped high-byte write to cartridge ROM to be ignored",
 	)
 	testing.expect(t, cpu.pc == 0x0103, "Expected PC to advance by 3")
 	testing.expect(t, cycles == 5, "Expected LD [imm16], SP to take 5 cycles")
@@ -1214,9 +1214,9 @@ test_ld_r8_imm8_loads_byte_boundaries_and_preserves_clear_flags :: proc(t: ^test
 
 @(test)
 test_ld_hl_indirect_imm8_writes_at_ffff_and_pc_wraps :: proc(t: ^testing.T) {
-	bus: gb.Bus
-	bus.memory[0xFFFE] = 0x36
-	bus.memory[0xFFFF] = 0x5A
+	bus := make_test_bus([]u8{})
+	gb.bus_write_byte(&bus, 0xFFFE, 0x36)
+	gb.bus_write_byte(&bus, 0xFFFF, 0x5A)
 	cpu := make_test_cpu()
 	cpu.pc = 0xFFFE
 	cpu.h = 0xFF
@@ -1417,9 +1417,9 @@ test_jr_applies_positive_zero_and_negative_offsets_from_end_of_instruction :: pr
 
 @(test)
 test_jr_wraps_pc_across_both_ends_of_address_space :: proc(t: ^testing.T) {
-	bus: gb.Bus
-	bus.memory[0xFFFE] = 0x18
-	bus.memory[0xFFFF] = 0x01
+	bus := make_test_bus([]u8{})
+	gb.bus_write_byte(&bus, 0xFFFE, 0x18)
+	gb.bus_write_byte(&bus, 0xFFFF, 0x01)
 	cpu := make_test_cpu()
 	cpu.pc = 0xFFFE
 	cpu.f = 0x10
@@ -1431,8 +1431,8 @@ test_jr_wraps_pc_across_both_ends_of_address_space :: proc(t: ^testing.T) {
 	testing.expect(t, cpu.f == 0x10, "Expected wrapping JR to preserve flags")
 	testing.expect(t, cycles == 3, "Expected wrapping JR to take 3 cycles")
 
-	bus.memory[0x0000] = 0x18
-	bus.memory[0x0001] = 0xFD
+	bus.cartridge.rom[0x0000] = 0x18
+	bus.cartridge.rom[0x0001] = 0xFD
 	cpu.pc = 0x0000
 	cpu.f = 0xE0
 
@@ -2012,7 +2012,7 @@ test_alu_imm8_fetch_wraps_across_end_of_address_space :: proc(t: ^testing.T) {
 	cpu.pc = 0xFFFF
 	cpu.a = 0x01
 	gb.bus_write_byte(&bus, 0xFFFF, 0xC6)
-	gb.bus_write_byte(&bus, 0x0000, 0x02)
+	bus.cartridge.rom[0x0000] = 0x02
 
 	cycles, ok := gb.Cpu_step(&cpu, &bus)
 
@@ -2054,8 +2054,8 @@ expect_condition :: proc(t: ^testing.T, opcode, flags: u8, taken: bool, kind: u8
 	cpu := make_test_cpu()
 	cpu.f = flags
 	cpu.sp = 0xC100
-	bus.memory[0xC100] = 0x78
-	bus.memory[0xC101] = 0x56
+	gb.bus_write_byte(&bus, 0xC100, 0x78)
+	gb.bus_write_byte(&bus, 0xC101, 0x56)
 
 	cycles, ok := gb.Cpu_step(&cpu, &bus)
 
@@ -2113,12 +2113,12 @@ expect_condition :: proc(t: ^testing.T, opcode, flags: u8, taken: bool, kind: u8
 			expected_cycles = 6
 			testing.expect(
 				t,
-				bus.memory[0xC0FE] == 0x03,
+				gb.bus_read_byte(&bus, 0xC0FE) == 0x03,
 				"Expected CALL to push the return address low byte",
 			)
 			testing.expect(
 				t,
-				bus.memory[0xC0FF] == 0x01,
+				gb.bus_read_byte(&bus, 0xC0FF) == 0x01,
 				"Expected CALL to push the return address high byte",
 			)
 		}
@@ -2169,8 +2169,8 @@ test_ret_and_reti_pop_pc_and_reti_enables_interrupts :: proc(t: ^testing.T) {
 		cpu.sp = 0xFFFF
 		cpu.f = 0xB0
 		cpu.ime = false
-		bus.memory[0xFFFF] = 0xCD
-		bus.memory[0x0000] = 0xAB
+		gb.bus_write_byte(&bus, 0xFFFF, 0xCD)
+		bus.cartridge.rom[0x0000] = 0xAB
 
 		cycles, ok := gb.Cpu_step(&cpu, &bus)
 
@@ -2215,12 +2215,12 @@ test_call_pushes_return_address_and_jumps :: proc(t: ^testing.T) {
 	testing.expect(t, cpu.sp == 0xFFFF, "Expected CALL stack push to wrap SP")
 	testing.expect(
 		t,
-		bus.memory[0xFFFF] == 0x03,
+		gb.bus_read_byte(&bus, 0xFFFF) == 0x03,
 		"Expected CALL to store the return low byte at SP",
 	)
 	testing.expect(
 		t,
-		bus.memory[0x0000] == 0x01,
+		gb.bus_read_byte(&bus, 0x0000) == 0x00,
 		"Expected CALL to store the return high byte above SP",
 	)
 	testing.expect(t, cpu.f == 0xA0, "Expected CALL to preserve flags")
@@ -2241,8 +2241,16 @@ test_rst_covers_all_targets_and_pushes_return_address :: proc(t: ^testing.T) {
 		testing.expect(t, ok, "Expected RST to succeed")
 		testing.expect(t, cpu.pc == u16(index * 8), "Expected RST to jump to its encoded vector")
 		testing.expect(t, cpu.sp == 0xCFFE, "Expected RST to decrement SP by 2")
-		testing.expect(t, bus.memory[0xCFFE] == 0x01, "Expected RST to push the return low byte")
-		testing.expect(t, bus.memory[0xCFFF] == 0x01, "Expected RST to push the return high byte")
+		testing.expect(
+			t,
+			gb.bus_read_byte(&bus, 0xCFFE) == 0x01,
+			"Expected RST to push the return low byte",
+		)
+		testing.expect(
+			t,
+			gb.bus_read_byte(&bus, 0xCFFF) == 0x01,
+			"Expected RST to push the return high byte",
+		)
 		testing.expect(t, cpu.f == 0x70, "Expected RST to preserve flags")
 		testing.expect(t, cycles == 4, "Expected RST to take 4 cycles")
 	}
@@ -2265,8 +2273,8 @@ test_pop_r16stk_covers_all_register_pairs :: proc(t: ^testing.T) {
 		cpu.h = 0x15
 		cpu.l = 0x25
 		cpu.sp = 0xC000
-		bus.memory[0xC000] = 0x3F
-		bus.memory[0xC001] = 0x92
+		gb.bus_write_byte(&bus, 0xC000, 0x3F)
+		gb.bus_write_byte(&bus, 0xC001, 0x92)
 
 		cycles, ok := gb.Cpu_step(&cpu, &bus)
 
@@ -2301,8 +2309,8 @@ test_pop_r16stk_wraps_stack_pointer :: proc(t: ^testing.T) {
 	bus := make_test_bus([]u8{0xE1})
 	cpu := make_test_cpu()
 	cpu.sp = 0xFFFF
-	bus.memory[0xFFFF] = 0x34
-	bus.memory[0x0000] = 0x12
+	gb.bus_write_byte(&bus, 0xFFFF, 0x34)
+	bus.cartridge.rom[0x0000] = 0x12
 
 	cycles, ok := gb.Cpu_step(&cpu, &bus)
 
@@ -2338,12 +2346,12 @@ test_push_r16stk_covers_all_register_pairs :: proc(t: ^testing.T) {
 		testing.expect(t, cpu.sp == 0xC000, "Expected PUSH r16stk to decrement SP by 2")
 		testing.expect(
 			t,
-			bus.memory[0xC000] == u8(expected),
+			gb.bus_read_byte(&bus, 0xC000) == u8(expected),
 			"Expected PUSH r16stk to store the low byte at SP",
 		)
 		testing.expect(
 			t,
-			bus.memory[0xC001] == u8(expected >> 8),
+			gb.bus_read_byte(&bus, 0xC001) == u8(expected >> 8),
 			"Expected PUSH r16stk to store the high byte above SP",
 		)
 		testing.expect(t, cpu.pc == 0x0101, "Expected PUSH r16stk to advance PC by 1")
@@ -2368,12 +2376,12 @@ test_push_r16stk_wraps_stack_pointer :: proc(t: ^testing.T) {
 	testing.expect(t, cpu.sp == 0xFFFF, "Expected PUSH BC to wrap SP")
 	testing.expect(
 		t,
-		bus.memory[0xFFFF] == 0x34,
+		gb.bus_read_byte(&bus, 0xFFFF) == 0x34,
 		"Expected PUSH BC to store the low byte at wrapped SP",
 	)
 	testing.expect(
 		t,
-		bus.memory[0x0000] == 0x12,
+		gb.bus_read_byte(&bus, 0x0000) == 0x00,
 		"Expected PUSH BC to store the high byte above wrapped SP",
 	)
 	testing.expect(t, cpu.pc == 0x0101, "Expected PUSH BC to advance PC by 1")
@@ -2398,7 +2406,7 @@ test_ldh_c_accumulator_loads_cover_high_memory_boundaries :: proc(t: ^testing.T)
 		testing.expect(t, store_ok, "Expected LDH [C], A to succeed")
 		testing.expect(
 			t,
-			store_bus.memory[address] == 0xA5,
+			gb.bus_read_byte(&store_bus, address) == 0xA5,
 			"Expected LDH [C], A to write to FF00+C",
 		)
 		testing.expect(
@@ -2411,7 +2419,7 @@ test_ldh_c_accumulator_loads_cover_high_memory_boundaries :: proc(t: ^testing.T)
 		testing.expect(t, store_cycles == 2, "Expected LDH [C], A to take 2 cycles")
 
 		load_bus := make_test_bus([]u8{0xF2})
-		load_bus.memory[address] = 0x5A
+		gb.bus_write_byte(&load_bus, address, 0x5A)
 		load_cpu := make_test_cpu()
 		load_cpu.a = 0x11
 		load_cpu.c = offset
@@ -2442,7 +2450,7 @@ test_ldh_imm8_accumulator_loads_cover_high_memory_boundaries :: proc(t: ^testing
 		testing.expect(t, store_ok, "Expected LDH [imm8], A to succeed")
 		testing.expect(
 			t,
-			store_bus.memory[address] == 0xA5,
+			gb.bus_read_byte(&store_bus, address) == 0xA5,
 			"Expected LDH [imm8], A to write to FF00+imm8",
 		)
 		testing.expect(
@@ -2454,7 +2462,7 @@ test_ldh_imm8_accumulator_loads_cover_high_memory_boundaries :: proc(t: ^testing
 		testing.expect(t, store_cycles == 3, "Expected LDH [imm8], A to take 3 cycles")
 
 		load_bus := make_test_bus([]u8{0xF0, offset})
-		load_bus.memory[address] = 0x5A
+		gb.bus_write_byte(&load_bus, address, 0x5A)
 		load_cpu := make_test_cpu()
 		load_cpu.f = 0xB0
 		load_cycles, load_ok := gb.Cpu_step(&load_cpu, &load_bus)
@@ -2478,7 +2486,7 @@ test_ld_imm16_accumulator_loads_use_little_endian_address :: proc(t: ^testing.T)
 	testing.expect(t, store_ok, "Expected LD [imm16], A to succeed")
 	testing.expect(
 		t,
-		store_bus.memory[0xC234] == 0xA5,
+		gb.bus_read_byte(&store_bus, 0xC234) == 0xA5,
 		"Expected LD [imm16], A to use a little-endian address",
 	)
 	testing.expect(
@@ -2490,7 +2498,7 @@ test_ld_imm16_accumulator_loads_use_little_endian_address :: proc(t: ^testing.T)
 	testing.expect(t, store_cycles == 4, "Expected LD [imm16], A to take 4 cycles")
 
 	load_bus := make_test_bus([]u8{0xFA, 0x34, 0xC2})
-	load_bus.memory[0xC234] = 0x5A
+	gb.bus_write_byte(&load_bus, 0xC234, 0x5A)
 	load_cpu := make_test_cpu()
 	load_cpu.f = 0xB0
 	load_cycles, load_ok := gb.Cpu_step(&load_cpu, &load_bus)

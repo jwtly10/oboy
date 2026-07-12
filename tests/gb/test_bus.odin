@@ -36,7 +36,148 @@ test_bus_write_u16_wraps_at_end_of_address_space :: proc(t: ^testing.T) {
 	)
 	testing.expect(
 		t,
-		gb.bus_read_byte(&bus, 0x0000) == 0xAB,
-		"Expected high byte to wrap to address 0x0000",
+		gb.bus_read_byte(&bus, 0x0000) == 0x00,
+		"Expected the wrapped high-byte write to cartridge ROM to be ignored",
+	)
+}
+
+// --- Bus memory map tests ---
+
+@(test)
+test_bus_init_maps_rom_and_returns_ff_beyond_loaded_data :: proc(t: ^testing.T) {
+	rom := []u8{0x12, 0x34}
+	bus := gb.Bus_init(rom)
+
+	testing.expect(
+		t,
+		gb.bus_read_byte(&bus, 0x0000) == 0x12,
+		"Expected the first ROM byte at 0x0000",
+	)
+	testing.expect(
+		t,
+		gb.bus_read_byte(&bus, 0x0001) == 0x34,
+		"Expected the second ROM byte at 0x0001",
+	)
+	testing.expect(
+		t,
+		gb.bus_read_byte(&bus, 0x0002) == 0xFF,
+		"Expected unloaded ROM space to read as 0xFF",
+	)
+	testing.expect(
+		t,
+		gb.bus_read_byte(&bus, 0x7FFF) == 0xFF,
+		"Expected the ROM boundary beyond loaded data to read as 0xFF",
+	)
+}
+
+@(test)
+test_bus_ignores_rom_and_unimplemented_cartridge_ram_writes :: proc(t: ^testing.T) {
+	rom := []u8{0x42}
+	bus := gb.Bus_init(rom)
+
+	gb.bus_write_byte(&bus, 0x0000, 0x99)
+	gb.bus_write_byte(&bus, 0xA000, 0x77)
+
+	testing.expect(
+		t,
+		gb.bus_read_byte(&bus, 0x0000) == 0x42,
+		"Expected writes not to modify cartridge ROM",
+	)
+	testing.expect(
+		t,
+		gb.bus_read_byte(&bus, 0xA000) == 0xFF,
+		"Expected unimplemented cartridge RAM to read as 0xFF",
+	)
+}
+
+@(test)
+test_bus_read_write_regions_cover_boundaries :: proc(t: ^testing.T) {
+	bus := make_test_bus([]u8{})
+	addresses := [10]u16 {
+		0x8000,
+		0x9FFF,
+		0xC000,
+		0xDFFF,
+		0xFE00,
+		0xFE9F,
+		0xFF00,
+		0xFF7F,
+		0xFF80,
+		0xFFFE,
+	}
+
+	for address, index in addresses {
+		value := u8(index + 1)
+		gb.bus_write_byte(&bus, address, value)
+		testing.expect(
+			t,
+			gb.bus_read_byte(&bus, address) == value,
+			"Expected mapped memory boundary to retain its byte",
+		)
+	}
+
+	gb.bus_write_byte(&bus, 0xFFFF, 0xA5)
+	testing.expect(
+		t,
+		gb.bus_read_byte(&bus, 0xFFFF) == 0xA5,
+		"Expected interrupt-enable register to retain its byte",
+	)
+}
+
+@(test)
+test_bus_echo_ram_mirrors_work_ram_in_both_directions :: proc(t: ^testing.T) {
+	bus := make_test_bus([]u8{})
+
+	gb.bus_write_byte(&bus, 0xC000, 0x12)
+	gb.bus_write_byte(&bus, 0xFDFF, 0x34)
+
+	testing.expect(
+		t,
+		gb.bus_read_byte(&bus, 0xE000) == 0x12,
+		"Expected echo RAM to mirror the start of work RAM",
+	)
+	testing.expect(
+		t,
+		gb.bus_read_byte(&bus, 0xDDFF) == 0x34,
+		"Expected a write at the end of echo RAM to update work RAM",
+	)
+}
+
+@(test)
+test_bus_unusable_oam_area_reads_ff_and_ignores_writes :: proc(t: ^testing.T) {
+	bus := make_test_bus([]u8{})
+
+	gb.bus_write_byte(&bus, 0xFEA0, 0x12)
+	gb.bus_write_byte(&bus, 0xFEFF, 0x34)
+
+	testing.expect(
+		t,
+		gb.bus_read_byte(&bus, 0xFEA0) == 0xFF,
+		"Expected the start of unusable memory to read as 0xFF",
+	)
+	testing.expect(
+		t,
+		gb.bus_read_byte(&bus, 0xFEFF) == 0xFF,
+		"Expected the end of unusable memory to read as 0xFF",
+	)
+}
+
+@(test)
+test_bus_read_u16_reads_little_endian_and_wraps_address_space :: proc(t: ^testing.T) {
+	bus := make_test_bus([]u8{})
+	bus.cartridge.rom[0x0000] = 0xAB
+	gb.bus_write_byte(&bus, 0xC000, 0x34)
+	gb.bus_write_byte(&bus, 0xC001, 0x12)
+	gb.bus_write_byte(&bus, 0xFFFF, 0xCD)
+
+	testing.expect(
+		t,
+		gb.bus_read_u16_le(&bus, 0xC000) == 0x1234,
+		"Expected a little-endian 16-bit read",
+	)
+	testing.expect(
+		t,
+		gb.bus_read_u16_le(&bus, 0xFFFF) == 0xABCD,
+		"Expected a 16-bit read to wrap from 0xFFFF to ROM",
 	)
 }
