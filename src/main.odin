@@ -22,7 +22,7 @@ main :: proc() {
 	gb.Print_rom_header(&header)
 
 	bus := gb.Bus_init(rom)
-	cpu := gb.Cpu_init()
+	cpu := gb.Cpu_init_post_boot()
 
 	for i := 0; i < 3; i += 1 {
 		_, ok := gb.Cpu_step(&cpu, &bus)

@@ -61,8 +61,26 @@ R16_stk :: enum {
 	AF,
 }
 
-Cpu_init :: proc() -> Cpu {
-	return Cpu{pc = 0x0100}
+// We do not replicate CPU Boot ROM. We init at post boot phase.
+//
+// Based on DMG column values https://gbdev.io/pandocs/Power_Up_Sequence.html#cpu-registers
+//
+// Note: Register F is set from flags Z = 1 N = 0 H = 1 C = 1 where we assume ROM
+// has checksum != 0. If checksum == 0 then then H/C flags should be clear.
+// Lower F bits should be 0 so 0xB0 == 10110000
+Cpu_init_post_boot :: proc() -> Cpu {
+	return Cpu {
+		a = 0x01,
+		f = 0xB0,
+		b = 0x00,
+		c = 0x13,
+		d = 0x00,
+		e = 0xD8,
+		h = 0x01,
+		l = 0x4D,
+		sp = 0xFFFE,
+		pc = 0x0100,
+	}
 }
 
 Cpu_step :: proc(cpu: ^Cpu, bus: ^Bus) -> (cycles: int, ok: bool) {
