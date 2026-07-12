@@ -85,6 +85,18 @@ Cpu_step :: proc(cpu: ^Cpu, bus: ^Bus) -> (cycles: int, ok: bool) {
 		cpu_ld_r16mem_a(cpu, bus, dest)
 		cycles = 2
 		ok = true
+	case 0x03, 0x13, 0x23, 0x33:
+		// inc r16
+		dest := R16((opcode >> 4) & 0b11)
+		cpu_inc_r16(cpu, dest)
+		cycles = 2
+		ok = true
+	case 0x0B, 0x1B, 0x2B, 0x3B:
+		// dec r16
+		dest := R16((opcode >> 4) & 0b11)
+		cpu_dec_r16(cpu, dest)
+		cycles = 2
+		ok = true
 	case 0x0A, 0x1A, 0x2A, 0x3A:
 		// ld a, [r16mem]
 		dest := R16_mem((opcode >> 4) & 0b11)
@@ -96,6 +108,12 @@ Cpu_step :: proc(cpu: ^Cpu, bus: ^Bus) -> (cycles: int, ok: bool) {
 		address := cpu_fetch_u16(cpu, bus)
 		bus_write_u16(bus, address, cpu.sp)
 		cycles = 5
+		ok = true
+	case 0x09, 0x19, 0x29, 0x39:
+		// add hl, r16
+		dest := R16((opcode >> 4) & 0b11)
+		cpu_add_hl_r16(cpu, dest)
+		cycles = 2
 		ok = true
 	case:
 		fmt.printf("Unimplemented opcode 0x%02X at 0x%04X\n", opcode, instruction_address)
@@ -167,6 +185,62 @@ cpu_get_hl :: proc(cpu: ^Cpu) -> u16 {
 	return (u16(cpu.h) << 8) | u16(cpu.l)
 }
 
+// Increments the contents of register pair R16 by 1.
+cpu_inc_r16 :: proc(cpu: ^Cpu, r_idx: R16) {
+	switch r_idx {
+	case .BC:
+		cpu_set_r16(cpu, .BC, cpu_get_bc(cpu) + 1)
+	case .DE:
+		cpu_set_r16(cpu, .DE, cpu_get_de(cpu) + 1)
+	case .HL:
+		cpu_set_r16(cpu, .HL, cpu_get_hl(cpu) + 1)
+	case .SP:
+		cpu_set_r16(cpu, .SP, cpu.sp + 1)
+	}
+}
+
+// Decrements the contents of register pair R16 by 1.
+cpu_dec_r16 :: proc(cpu: ^Cpu, r_idx: R16) {
+	switch r_idx {
+	case .BC:
+		cpu_set_r16(cpu, .BC, cpu_get_bc(cpu) - 1)
+	case .DE:
+		cpu_set_r16(cpu, .DE, cpu_get_de(cpu) - 1)
+	case .HL:
+		cpu_set_r16(cpu, .HL, cpu_get_hl(cpu) - 1)
+	case .SP:
+		cpu_set_r16(cpu, .SP, cpu.sp - 1)
+	}
+}
+
+// Adds the contents of register pair R16 to the contents of register pair HL,
+// and store the results in register pair HL.
+cpu_add_hl_r16 :: proc(cpu: ^Cpu, r_idx: R16) {
+	hl := cpu_get_hl(cpu)
+	value: u16
+
+	switch r_idx {
+	case .BC:
+		value = cpu_get_bc(cpu)
+	case .DE:
+		value = cpu_get_de(cpu)
+	case .HL:
+		value = cpu_get_hl(cpu)
+	case .SP:
+		value = cpu.sp
+	}
+
+	// We need to track if the op carries, so cast to 32 before downcasting on store
+	result := u32(hl) + u32(value)
+
+	cpu_set_r16(cpu, .HL, u16(result))
+
+	// Does not modify Z
+	cpu_set_flag(cpu, FLAG_N, false) // is not sub
+	cpu_set_flag(cpu, FLAG_H, (hl & 0x0FFF) + (value & 0x0FFF) > 0x0FFF) // carry from bit 11 intto 12
+	cpu_set_flag(cpu, FLAG_C, result > 0xFFFF) // carry past bit 15
+}
+
 // Set R16 reg specified value
 cpu_set_r16 :: proc(cpu: ^Cpu, r_idx: R16, value: u16) {
 	switch r_idx {
@@ -185,7 +259,7 @@ cpu_set_r16 :: proc(cpu: ^Cpu, r_idx: R16, value: u16) {
 }
 
 // Stores the contents of register A in the memory location specified by register pair R16_mem.
-// If HL reg, increment or decrement
+// If HL reg, increment or decrement.
 cpu_ld_r16mem_a :: proc(cpu: ^Cpu, bus: ^Bus, r_idx: R16_mem) {
 	switch r_idx {
 	case .BC:

@@ -830,4 +830,122 @@ test_ld_imm16_sp_wraps_second_write_from_ffff_to_0000 :: proc(t: ^testing.T) {
 	testing.expect(t, cycles == 5, "Expected LD [imm16], SP to take 5 cycles")
 }
 
+// --- inc r16, dec r16, and add hl, r16 opcode tests ---
+
+get_r16 :: proc(cpu: ^gb.Cpu, reg: gb.R16) -> u16 {
+	switch reg {
+	case .BC:
+		return gb.cpu_get_bc(cpu)
+	case .DE:
+		return gb.cpu_get_de(cpu)
+	case .HL:
+		return gb.cpu_get_hl(cpu)
+	case .SP:
+		return cpu.sp
+	}
+	return 0
+}
+
+expect_inc_r16 :: proc(t: ^testing.T, opcode: u8, reg: gb.R16, initial, expected: u16) {
+	bus := make_test_bus([]u8{opcode})
+	cpu := make_test_cpu()
+	cpu.f = 0xB0
+	gb.cpu_set_r16(&cpu, reg, initial)
+
+	cycles, ok := gb.Cpu_step(&cpu, &bus)
+
+	testing.expect(t, ok, "Expected INC r16 opcode to succeed")
+	testing.expect(t, get_r16(&cpu, reg) == expected, "Expected INC r16 to increment its operand")
+	testing.expect(t, cpu.f == 0xB0, "Expected INC r16 to leave flags unchanged")
+	testing.expect(t, cpu.pc == 0x0101, "Expected INC r16 to advance PC by 1")
+	testing.expect(t, cycles == 2, "Expected INC r16 to take 2 cycles")
+}
+
+@(test)
+test_inc_r16_all_operands :: proc(t: ^testing.T) {
+	expect_inc_r16(t, 0x03, .BC, 0x1234, 0x1235)
+	expect_inc_r16(t, 0x13, .DE, 0x2345, 0x2346)
+	expect_inc_r16(t, 0x23, .HL, 0x3456, 0x3457)
+	expect_inc_r16(t, 0x33, .SP, 0x4567, 0x4568)
+}
+
+@(test)
+test_inc_r16_wraps_at_ffff :: proc(t: ^testing.T) {
+	expect_inc_r16(t, 0x03, .BC, 0xFFFF, 0x0000)
+}
+
+expect_dec_r16 :: proc(t: ^testing.T, opcode: u8, reg: gb.R16, initial, expected: u16) {
+	bus := make_test_bus([]u8{opcode})
+	cpu := make_test_cpu()
+	cpu.f = 0xB0
+	gb.cpu_set_r16(&cpu, reg, initial)
+
+	cycles, ok := gb.Cpu_step(&cpu, &bus)
+
+	testing.expect(t, ok, "Expected DEC r16 opcode to succeed")
+	testing.expect(t, get_r16(&cpu, reg) == expected, "Expected DEC r16 to decrement its operand")
+	testing.expect(t, cpu.f == 0xB0, "Expected DEC r16 to leave flags unchanged")
+	testing.expect(t, cpu.pc == 0x0101, "Expected DEC r16 to advance PC by 1")
+	testing.expect(t, cycles == 2, "Expected DEC r16 to take 2 cycles")
+}
+
+@(test)
+test_dec_r16_all_operands :: proc(t: ^testing.T) {
+	expect_dec_r16(t, 0x0B, .BC, 0x1234, 0x1233)
+	expect_dec_r16(t, 0x1B, .DE, 0x2345, 0x2344)
+	expect_dec_r16(t, 0x2B, .HL, 0x3456, 0x3455)
+	expect_dec_r16(t, 0x3B, .SP, 0x4567, 0x4566)
+}
+
+@(test)
+test_dec_r16_wraps_at_0000 :: proc(t: ^testing.T) {
+	expect_dec_r16(t, 0x3B, .SP, 0x0000, 0xFFFF)
+}
+
+expect_add_hl_r16 :: proc(
+	t: ^testing.T,
+	opcode: u8,
+	reg: gb.R16,
+	hl, operand, expected: u16,
+	initial_flags, expected_flags: u8,
+) {
+	bus := make_test_bus([]u8{opcode})
+	cpu := make_test_cpu()
+	gb.cpu_set_r16(&cpu, .HL, hl)
+	if reg != .HL {
+		gb.cpu_set_r16(&cpu, reg, operand)
+	}
+	cpu.f = initial_flags
+
+	cycles, ok := gb.Cpu_step(&cpu, &bus)
+
+	testing.expect(t, ok, "Expected ADD HL, r16 opcode to succeed")
+	testing.expect(t, gb.cpu_get_hl(&cpu) == expected, "Expected ADD HL, r16 to store the 16-bit sum in HL")
+	testing.expect(t, cpu.f == expected_flags, "Expected ADD HL, r16 to preserve Z and set N, H, and C correctly")
+	testing.expect(t, cpu.pc == 0x0101, "Expected ADD HL, r16 to advance PC by 1")
+	testing.expect(t, cycles == 2, "Expected ADD HL, r16 to take 2 cycles")
+}
+
+@(test)
+test_add_hl_r16_all_operands :: proc(t: ^testing.T) {
+	expect_add_hl_r16(t, 0x09, .BC, 0x1000, 0x0001, 0x1001, 0x80, 0x80)
+	expect_add_hl_r16(t, 0x19, .DE, 0x2000, 0x0002, 0x2002, 0x80, 0x80)
+	expect_add_hl_r16(t, 0x29, .HL, 0x3000, 0x3000, 0x6000, 0x80, 0x80)
+	expect_add_hl_r16(t, 0x39, .SP, 0x4000, 0x0003, 0x4003, 0x80, 0x80)
+}
+
+@(test)
+test_add_hl_r16_sets_half_carry_from_bit_11 :: proc(t: ^testing.T) {
+	expect_add_hl_r16(t, 0x09, .BC, 0x0FFF, 0x0001, 0x1000, 0x00, 0x20)
+}
+
+@(test)
+test_add_hl_r16_wraps_and_sets_carry :: proc(t: ^testing.T) {
+	expect_add_hl_r16(t, 0x19, .DE, 0xFFFF, 0x0001, 0x0000, 0x00, 0x30)
+}
+
+@(test)
+test_add_hl_r16_preserves_zero_and_clears_other_stale_flags :: proc(t: ^testing.T) {
+	expect_add_hl_r16(t, 0x39, .SP, 0x1000, 0x0001, 0x1001, 0xF0, 0x80)
+}
 
