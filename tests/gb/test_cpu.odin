@@ -2501,3 +2501,117 @@ test_ld_imm16_accumulator_loads_use_little_endian_address :: proc(t: ^testing.T)
 	testing.expect(t, load_cpu.pc == 0x0103, "Expected LD A, [imm16] to advance PC by 3")
 	testing.expect(t, load_cycles == 4, "Expected LD A, [imm16] to take 4 cycles")
 }
+
+// --- SP offset and interrupt control opcode tests ---
+
+@(test)
+test_add_sp_imm8_handles_signed_offsets_and_flags :: proc(t: ^testing.T) {
+	cases := [?]struct {
+		sp:        u16,
+		immediate: u8,
+		expected:  u16,
+		flags:     u8,
+	} {
+		{0x0001, 0xFF, 0x0000, 0x30},
+		{0x00FF, 0x01, 0x0100, 0x30},
+		{0xFFFF, 0x01, 0x0000, 0x30},
+		{0x0000, 0x80, 0xFF80, 0x00},
+	}
+
+	for test_case in cases {
+		bus := make_test_bus([]u8{0xE8, test_case.immediate})
+		cpu := make_test_cpu()
+		cpu.sp = test_case.sp
+		cpu.f = 0xF0
+
+		cycles, ok := gb.Cpu_step(&cpu, &bus)
+
+		testing.expect(t, ok, "Expected ADD SP, imm8 to succeed")
+		testing.expect(t, cpu.sp == test_case.expected, "Expected ADD SP, imm8 signed result")
+		testing.expect(t, cpu.f == test_case.flags, "Expected ADD SP, imm8 flags")
+		testing.expect(t, cpu.pc == 0x0102, "Expected ADD SP, imm8 to advance PC by 2")
+		testing.expect(t, cycles == 4, "Expected ADD SP, imm8 to take 4 cycles")
+	}
+}
+
+@(test)
+test_ld_hl_sp_plus_imm8_preserves_sp_and_sets_flags :: proc(t: ^testing.T) {
+	bus := make_test_bus([]u8{0xF8, 0xF8})
+	cpu := make_test_cpu()
+	cpu.sp = 0x0008
+	cpu.f = 0xF0
+
+	cycles, ok := gb.Cpu_step(&cpu, &bus)
+
+	testing.expect(t, ok, "Expected LD HL, SP+imm8 to succeed")
+	testing.expect(t, gb.cpu_get_hl(&cpu) == 0x0000, "Expected signed negative offset result")
+	testing.expect(t, cpu.sp == 0x0008, "Expected LD HL, SP+imm8 to preserve SP")
+	testing.expect(t, cpu.f == 0x30, "Expected Z=0, N=0, H=1, C=1")
+	testing.expect(t, cpu.pc == 0x0102, "Expected LD HL, SP+imm8 to advance PC by 2")
+	testing.expect(t, cycles == 3, "Expected LD HL, SP+imm8 to take 3 cycles")
+}
+
+@(test)
+test_ld_sp_hl_copies_hl_and_preserves_flags :: proc(t: ^testing.T) {
+	bus := make_test_bus([]u8{0xF9})
+	cpu := make_test_cpu()
+	gb.cpu_set_r16(&cpu, .HL, 0xBEEF)
+	cpu.f = 0xB0
+
+	cycles, ok := gb.Cpu_step(&cpu, &bus)
+
+	testing.expect(t, ok, "Expected LD SP, HL to succeed")
+	testing.expect(t, cpu.sp == 0xBEEF, "Expected SP to copy HL")
+	testing.expect(t, gb.cpu_get_hl(&cpu) == 0xBEEF, "Expected HL to remain unchanged")
+	testing.expect(t, cpu.f == 0xB0, "Expected LD SP, HL to preserve flags")
+	testing.expect(t, cpu.pc == 0x0101, "Expected LD SP, HL to advance PC by 1")
+	testing.expect(t, cycles == 2, "Expected LD SP, HL to take 2 cycles")
+}
+
+@(test)
+test_di_disables_interrupts_immediately :: proc(t: ^testing.T) {
+	bus := make_test_bus([]u8{0xF3})
+	cpu := make_test_cpu()
+	cpu.ime = true
+	cpu.f = 0xB0
+
+	cycles, ok := gb.Cpu_step(&cpu, &bus)
+
+	testing.expect(t, ok, "Expected DI to succeed")
+	testing.expect(t, !cpu.ime, "Expected DI to disable IME")
+	testing.expect(t, cpu.f == 0xB0, "Expected DI to preserve flags")
+	testing.expect(t, cpu.pc == 0x0101, "Expected DI to advance PC by 1")
+	testing.expect(t, cycles == 1, "Expected DI to take 1 cycle")
+}
+
+@(test)
+test_ei_enables_interrupts_after_following_instruction_begins :: proc(t: ^testing.T) {
+	bus := make_test_bus([]u8{0xFB, 0x00})
+	cpu := make_test_cpu()
+
+	ei_cycles, ei_ok := gb.Cpu_step(&cpu, &bus)
+	testing.expect(t, ei_ok, "Expected EI to succeed")
+	testing.expect(t, !cpu.ime, "Expected EI enable to be delayed")
+	testing.expect(t, cpu.pc == 0x0101, "Expected EI to advance PC by 1")
+	testing.expect(t, ei_cycles == 1, "Expected EI to take 1 cycle")
+
+	nop_cycles, nop_ok := gb.Cpu_step(&cpu, &bus)
+	testing.expect(t, nop_ok, "Expected instruction after EI to succeed")
+	testing.expect(t, cpu.ime, "Expected IME enabled for the instruction after EI")
+	testing.expect(t, cpu.pc == 0x0102, "Expected following instruction to advance PC")
+	testing.expect(t, nop_cycles == 1, "Expected NOP to take 1 cycle")
+}
+
+@(test)
+test_di_cancels_pending_ei_enable :: proc(t: ^testing.T) {
+	bus := make_test_bus([]u8{0xFB, 0xF3, 0x00})
+	cpu := make_test_cpu()
+
+	_, ei_ok := gb.Cpu_step(&cpu, &bus)
+	_, di_ok := gb.Cpu_step(&cpu, &bus)
+	_, nop_ok := gb.Cpu_step(&cpu, &bus)
+
+	testing.expect(t, ei_ok && di_ok && nop_ok, "Expected EI, DI, and NOP to succeed")
+	testing.expect(t, !cpu.ime, "Expected DI to override and cancel delayed EI")
+	testing.expect(t, cpu.pc == 0x0103, "Expected all three instructions to execute")
+}

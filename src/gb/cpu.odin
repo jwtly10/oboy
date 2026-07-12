@@ -11,20 +11,21 @@ FLAG_C :: u8(1 << 4) // Carry flag
 // https://gbdev.io/pandocs/CPU_Instruction_Set.html#cpu-instruction-set
 Cpu :: struct {
 	// The r8 registers
-	a:       u8,
-	b:       u8,
-	c:       u8,
-	d:       u8,
-	e:       u8,
-	f:       u8,
-	h:       u8,
-	l:       u8,
-	sp:      u16,
-	pc:      u16,
-	stopped: bool,
-	halted:  bool,
-	trace:   bool,
-	ime:     bool,
+	a:             u8,
+	b:             u8,
+	c:             u8,
+	d:             u8,
+	e:             u8,
+	f:             u8,
+	h:             u8,
+	l:             u8,
+	sp:            u16,
+	pc:            u16,
+	stopped:       bool,
+	halted:        bool,
+	trace:         bool,
+	ime:           bool,
+	ime_scheduled: bool,
 }
 
 R8 :: enum {
@@ -72,6 +73,11 @@ Cpu_step :: proc(cpu: ^Cpu, bus: ^Bus) -> (cycles: int, ok: bool) {
 	if (cpu.halted) {
 		// Consume cycle, but no instruction execution
 		return 1, true
+	}
+
+	if cpu.ime_scheduled {
+		cpu.ime = true
+		cpu.ime_scheduled = false
 	}
 
 	instruction_address := cpu.pc
@@ -390,6 +396,42 @@ Cpu_step :: proc(cpu: ^Cpu, bus: ^Bus) -> (cycles: int, ok: bool) {
 		address := cpu_fetch_u16(cpu, bus)
 		cpu.a = bus_read_byte(bus, address)
 		cycles = 4
+		ok = true
+	case 0xE8:
+		// add sp, imm8
+		immediate := cpu_fetch_u8(cpu, bus)
+		sp := cpu.sp
+		cpu.sp = u16(i32(sp) + i32(i8(immediate)))
+		cpu.f = 0
+		cpu_set_flag(cpu, FLAG_H, (sp & 0x0F) + u16(immediate & 0x0F) > 0x0F)
+		cpu_set_flag(cpu, FLAG_C, (sp & 0xFF) + u16(immediate) > 0xFF)
+		cycles = 4
+		ok = true
+	case 0xF8:
+		// ld hl, sp + imm8
+		immediate := cpu_fetch_u8(cpu, bus)
+		sp := cpu.sp
+		cpu_set_r16(cpu, .HL, u16(i32(sp) + i32(i8(immediate))))
+		cpu.f = 0
+		cpu_set_flag(cpu, FLAG_H, (sp & 0x0F) + u16(immediate & 0x0F) > 0x0F)
+		cpu_set_flag(cpu, FLAG_C, (sp & 0xFF) + u16(immediate) > 0xFF)
+		cycles = 3
+		ok = true
+	case 0xF9:
+		// ld sp, hl
+		cpu.sp = cpu_get_hl(cpu)
+		cycles = 2
+		ok = true
+	case 0xF3:
+		// di
+		cpu.ime = false
+		cpu.ime_scheduled = false
+		cycles = 1
+		ok = true
+	case 0xFB:
+		// ei
+		cpu.ime_scheduled = true
+		cycles = 1
 		ok = true
 	case:
 		fmt.printf("Unimplemented opcode 0x%02X at 0x%04X\n", opcode, instruction_address)
