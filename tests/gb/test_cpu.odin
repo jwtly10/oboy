@@ -1409,3 +1409,156 @@ test_ccf_toggles_carry_clears_n_and_h_and_preserves_zero :: proc(t: ^testing.T) 
 	expect_accumulator_flag_opcode(t, 0x3F, 0xA5, 0xFF, 0xA5, 0x80)
 	expect_accumulator_flag_opcode(t, 0x3F, 0xA5, 0x8F, 0xA5, 0x90)
 }
+
+// --- jr opcode tests ---
+
+expect_jr :: proc(t: ^testing.T, offset: u8, expected_pc: u16) {
+	bus := make_test_bus([]u8{0x18, offset})
+	cpu := make_test_cpu()
+	cpu.a = 0x42
+	cpu.sp = 0xCDEF
+	cpu.f = 0xBF
+
+	cycles, ok := gb.Cpu_step(&cpu, &bus)
+
+	testing.expect(t, ok, "Expected JR imm8 to succeed")
+	testing.expect(t, cpu.pc == expected_pc, "Expected JR imm8 to apply the signed offset")
+	testing.expect(t, cycles == 3, "Expected JR imm8 to take 3 cycles")
+	testing.expect(t, cpu.f == 0xBF, "Expected JR imm8 to leave flags unchanged")
+	testing.expect(t, cpu.a == 0x42, "Expected JR imm8 to leave registers unchanged")
+	testing.expect(t, cpu.sp == 0xCDEF, "Expected JR imm8 to leave SP unchanged")
+}
+
+@(test)
+test_jr_applies_positive_zero_and_negative_offsets_from_end_of_instruction :: proc(t: ^testing.T) {
+	expect_jr(t, 0x7F, 0x0181)
+	expect_jr(t, 0x00, 0x0102)
+	expect_jr(t, 0x80, 0x0082)
+	expect_jr(t, 0xFE, 0x0100)
+}
+
+@(test)
+test_jr_wraps_pc_across_both_ends_of_address_space :: proc(t: ^testing.T) {
+	bus: gb.Bus
+	bus.memory[0xFFFE] = 0x18
+	bus.memory[0xFFFF] = 0x01
+	cpu := make_test_cpu()
+	cpu.pc = 0xFFFE
+	cpu.f = 0x10
+
+	cycles, ok := gb.Cpu_step(&cpu, &bus)
+
+	testing.expect(t, ok, "Expected forward wrapping JR to succeed")
+	testing.expect(t, cpu.pc == 0x0001, "Expected JR to wrap forward through 0000")
+	testing.expect(t, cpu.f == 0x10, "Expected wrapping JR to preserve flags")
+	testing.expect(t, cycles == 3, "Expected wrapping JR to take 3 cycles")
+
+	bus.memory[0x0000] = 0x18
+	bus.memory[0x0001] = 0xFD
+	cpu.pc = 0x0000
+	cpu.f = 0xE0
+
+	cycles, ok = gb.Cpu_step(&cpu, &bus)
+
+	testing.expect(t, ok, "Expected backward wrapping JR to succeed")
+	testing.expect(t, cpu.pc == 0xFFFF, "Expected JR to wrap backward through FFFF")
+	testing.expect(t, cpu.f == 0xE0, "Expected backward wrapping JR to preserve flags")
+	testing.expect(t, cycles == 3, "Expected backward wrapping JR to take 3 cycles")
+}
+
+// --- jr conditional opcode tests ---
+
+expect_jr_condition :: proc(t: ^testing.T, opcode, initial_flags: u8, should_jump: bool) {
+	bus := make_test_bus([]u8{opcode, 0x05})
+	cpu := make_test_cpu()
+	cpu.a = 0x6A
+	cpu.sp = 0xBEEF
+	cpu.f = initial_flags
+
+	cycles, ok := gb.Cpu_step(&cpu, &bus)
+
+	expected_pc := u16(0x0102)
+	expected_cycles := 2
+	if should_jump {
+		expected_pc = 0x0107
+		expected_cycles = 3
+	}
+
+	testing.expect(t, ok, "Expected conditional JR to succeed")
+	testing.expect(t, cpu.pc == expected_pc, "Expected conditional JR to select the correct PC")
+	testing.expect(
+		t,
+		cycles == expected_cycles,
+		"Expected conditional JR timing to depend on whether the branch is taken",
+	)
+	testing.expect(t, cpu.f == initial_flags, "Expected conditional JR to preserve all flags")
+	testing.expect(t, cpu.a == 0x6A, "Expected conditional JR to leave registers unchanged")
+	testing.expect(t, cpu.sp == 0xBEEF, "Expected conditional JR to leave SP unchanged")
+}
+
+@(test)
+test_jr_conditions_branch_for_both_flag_states :: proc(t: ^testing.T) {
+	expect_jr_condition(t, 0x20, 0x0F, true) // JR NZ with Z clear.
+	expect_jr_condition(t, 0x20, 0x8F, false) // JR NZ with Z set.
+	expect_jr_condition(t, 0x28, 0x8F, true) // JR Z with Z set.
+	expect_jr_condition(t, 0x28, 0x0F, false) // JR Z with Z clear.
+	expect_jr_condition(t, 0x30, 0x8F, true) // JR NC with C clear.
+	expect_jr_condition(t, 0x30, 0x9F, false) // JR NC with C set.
+	expect_jr_condition(t, 0x38, 0x9F, true) // JR C with C set.
+	expect_jr_condition(t, 0x38, 0x8F, false) // JR C with C clear.
+}
+
+@(test)
+test_jr_condition_fetches_negative_offset_when_not_taken :: proc(t: ^testing.T) {
+	bus := make_test_bus([]u8{0x28, 0x80})
+	cpu := make_test_cpu()
+	cpu.f = 0x10
+
+	cycles, ok := gb.Cpu_step(&cpu, &bus)
+
+	testing.expect(t, ok, "Expected untaken JR Z to succeed")
+	testing.expect(t, cpu.pc == 0x0102, "Expected untaken JR Z to skip its offset byte")
+	testing.expect(t, cpu.f == 0x10, "Expected untaken JR Z to preserve flags")
+	testing.expect(t, cycles == 2, "Expected untaken JR Z to take 2 cycles")
+}
+
+// --- stop opcode tests ---
+
+@(test)
+test_stop_consumes_padding_byte_and_enters_stopped_state :: proc(t: ^testing.T) {
+	bus := make_test_bus([]u8{0x10, 0x00, 0x00})
+	cpu := make_test_cpu()
+	cpu.a = 0x35
+	cpu.sp = 0xCAFE
+	cpu.f = 0xAF
+
+	cycles, ok := gb.Cpu_step(&cpu, &bus)
+
+	testing.expect(t, ok, "Expected STOP to succeed")
+	testing.expect(t, cycles == 1, "Expected STOP to take 1 cycle")
+	testing.expect(t, cpu.pc == 0x0102, "Expected STOP to consume its padding byte")
+	testing.expect(t, cpu.stopped, "Expected STOP to enter the stopped state")
+	testing.expect(t, cpu.f == 0xAF, "Expected STOP to leave flags unchanged")
+	testing.expect(t, cpu.a == 0x35, "Expected STOP to leave registers unchanged")
+	testing.expect(t, cpu.sp == 0xCAFE, "Expected STOP to leave SP unchanged")
+}
+
+@(test)
+test_stopped_cpu_does_not_fetch_or_execute_next_instruction :: proc(t: ^testing.T) {
+	bus := make_test_bus([]u8{0x10, 0x00, 0x3E, 0x99})
+	cpu := make_test_cpu()
+	cpu.a = 0x12
+	cpu.f = 0xB0
+
+	_, first_ok := gb.Cpu_step(&cpu, &bus)
+	cycles, second_ok := gb.Cpu_step(&cpu, &bus)
+
+	testing.expect(t, first_ok, "Expected STOP to succeed")
+	testing.expect(t, second_ok, "Expected a stopped CPU step to succeed")
+	testing.expect(t, cycles == 0, "Expected a stopped CPU not to execute an instruction cycle")
+	testing.expect(t, cpu.pc == 0x0102, "Expected a stopped CPU not to fetch the next opcode")
+	testing.expect(t, cpu.a == 0x12, "Expected a stopped CPU not to execute the next opcode")
+	testing.expect(t, cpu.f == 0xB0, "Expected a stopped CPU to preserve flags")
+	testing.expect(t, cpu.stopped, "Expected the CPU to remain stopped without a wake event")
+}
+

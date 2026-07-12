@@ -11,17 +11,18 @@ FLAG_C :: u8(1 << 4) // Carry flag
 // https://gbdev.io/pandocs/CPU_Instruction_Set.html#cpu-instruction-set
 Cpu :: struct {
 	// The r8 registers
-	a:     u8,
-	b:     u8,
-	c:     u8,
-	d:     u8,
-	e:     u8,
-	f:     u8,
-	h:     u8,
-	l:     u8,
-	sp:    u16,
-	pc:    u16,
-	trace: bool,
+	a:       u8,
+	b:       u8,
+	c:       u8,
+	d:       u8,
+	e:       u8,
+	f:       u8,
+	h:       u8,
+	l:       u8,
+	sp:      u16,
+	pc:      u16,
+	stopped: bool,
+	trace:   bool,
 }
 
 R8 :: enum {
@@ -61,6 +62,11 @@ Cpu_init :: proc() -> Cpu {
 }
 
 Cpu_step :: proc(cpu: ^Cpu, bus: ^Bus) -> (cycles: int, ok: bool) {
+	if (cpu.stopped) {
+		// No CPU cycles consumed
+		return 0, true
+	}
+
 	instruction_address := cpu.pc
 	opcode := cpu_fetch_u8(cpu, bus)
 
@@ -200,6 +206,45 @@ Cpu_step :: proc(cpu: ^Cpu, bus: ^Bus) -> (cycles: int, ok: bool) {
 	case 0x3F:
 		// ccf
 		cpu_ccf(cpu)
+		cycles = 1
+		ok = true
+	case 0x18:
+		// jr imm8
+		offset := i8(cpu_fetch_u8(cpu, bus))
+		cpu.pc = u16(i32(cpu.pc) + i32(offset))
+		cycles = 3
+		ok = true
+	case 0x20, 0x28, 0x30, 0x38:
+		// jr cond, imm8
+		condition := (opcode >> 3) & 0b11
+		offset := i8(cpu_fetch_u8(cpu, bus))
+
+		jump := false
+
+		switch condition {
+		case 0:
+			jump = (cpu.f & FLAG_Z) == 0 // NZ
+		case 1:
+			jump = (cpu.f & FLAG_Z) != 0 // Z
+		case 2:
+			jump = (cpu.f & FLAG_C) == 0 // NC
+		case 3:
+			jump = (cpu.f & FLAG_C) != 0 // C
+		}
+
+		if jump {
+			cpu.pc = u16(i32(cpu.pc) + i32(offset))
+			cycles = 3
+		} else {
+			cycles = 2
+		}
+
+		ok = true
+	case 0x10:
+		// stop
+		// TODO: https://gist.github.com/SonoSooS/c0055300670d678b5ae8433e20bea595#nop-and-stop may not always be ignored
+		_ = cpu_fetch_u8(cpu, bus)
+		cpu.stopped = true
 		cycles = 1
 		ok = true
 	case:
@@ -532,3 +577,4 @@ cpu_ld_a_r16mem :: proc(cpu: ^Cpu, bus: ^Bus, r_idx: R16_mem) {
 		cpu_set_r16(cpu, .HL, address - 1)
 	}
 }
+
