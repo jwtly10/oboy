@@ -19,4 +19,11 @@ main :: proc() {
 		return
 	}
 	print_rom_header(&header)
+
+	bus := bus_init(rom)
+	cpu := cpu_init()
+
+	for i := 0; i < 3; i += 1 {
+		cpu_step(&cpu, &bus)
+	}
 }
