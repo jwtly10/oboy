@@ -157,28 +157,6 @@ test_jp_imm16_sets_pc :: proc(t: ^testing.T) {
 	testing.expect(t, cycles == 4, "Expected JP imm16 to take 4 cycles")
 }
 
-// --- cp a, imm8 opcode tests ---
-
-@(test)
-test_cp_a_imm8_equal_sets_zero_and_subtract :: proc(t: ^testing.T) {
-	bus := make_test_bus([]u8{0xFE, 0x42})
-	cpu := make_test_cpu()
-	cpu.a = 0x42
-
-	cycles, ok := gb.Cpu_step(&cpu, &bus)
-
-	// 66 - 66 = 0, so Z is set.
-	// CP is a subtraction operation, so N is always set.
-	// The lower nibble is 2 - 2, so no half-borrow is needed and H is clear.
-	// 66 is not less than 66, so no full borrow is needed and C is clear.
-	// Flags: Z=1, N=1, H=0, C=0 -> 1100_0000 -> 0xC0.
-	testing.expect(t, ok, "Expected CP a, imm8 to succeed")
-	testing.expect(t, cycles == 2, "Expected CP a, imm8 to take 2 cycles")
-	testing.expect(t, cpu.pc == 0x0102, "Expected PC to advance by 2")
-	testing.expect(t, cpu.a == 0x42, "Expected CP to leave A unchanged")
-	testing.expect(t, cpu.f == 0xC0, "Expected Z=1, N=1, H=0, C=0")
-}
-
 @(test)
 test_cp_imm8_sets_half_carry :: proc(t: ^testing.T) {
 	bus := make_test_bus([]u8{0xFE, 0x01})
@@ -1875,4 +1853,196 @@ test_cp_a_l_sets_subtraction_flags_without_changing_a :: proc(t: ^testing.T) {
 	testing.expect(t, cpu.f == 0x50, "Expected CP to set N and C without half-borrow")
 	testing.expect(t, cpu.pc == 0x0101, "Expected CP A, L to advance PC by 1")
 	testing.expect(t, cycles == 1, "Expected CP A, L to take 1 cycle")
+}
+
+// --- 8-bit immediate arithmetic and logic opcode tests ---
+
+@(test)
+test_add_a_imm8_wraps_and_sets_zero_half_carry_and_carry :: proc(t: ^testing.T) {
+	bus := make_test_bus([]u8{0xC6, 0x78})
+	cpu := make_test_cpu()
+	cpu.a = 0x88
+	cpu.f = 0xFF
+
+	cycles, ok := gb.Cpu_step(&cpu, &bus)
+
+	testing.expect(t, ok, "Expected ADD A, imm8 to succeed")
+	testing.expect(t, cpu.a == 0x00, "Expected ADD A, imm8 result to wrap to zero")
+	testing.expect(t, cpu.f == 0xB0, "Expected ADD A, imm8 to set Z, H, and C and clear N")
+	testing.expect(t, cpu.pc == 0x0102, "Expected ADD A, imm8 to advance PC by 2")
+	testing.expect(t, cycles == 2, "Expected ADD A, imm8 to take 2 cycles")
+}
+
+@(test)
+test_adc_a_imm8_uses_set_carry_in_result_and_flags :: proc(t: ^testing.T) {
+	bus := make_test_bus([]u8{0xCE, 0x00})
+	cpu := make_test_cpu()
+	cpu.a = 0x0F
+	cpu.f = 0x1F
+
+	cycles, ok := gb.Cpu_step(&cpu, &bus)
+
+	testing.expect(t, ok, "Expected ADC A, imm8 to succeed")
+	testing.expect(t, cpu.a == 0x10, "Expected ADC A, imm8 to include the incoming carry")
+	testing.expect(t, cpu.f == 0x20, "Expected ADC A, imm8 carry input to cause half-carry")
+	testing.expect(t, cpu.pc == 0x0102, "Expected ADC A, imm8 to advance PC by 2")
+	testing.expect(t, cycles == 2, "Expected ADC A, imm8 to take 2 cycles")
+}
+
+@(test)
+test_adc_a_imm8_with_clear_carry_does_not_add_carry :: proc(t: ^testing.T) {
+	bus := make_test_bus([]u8{0xCE, 0x00})
+	cpu := make_test_cpu()
+	cpu.a = 0x0F
+	cpu.f = 0xEF
+
+	cycles, ok := gb.Cpu_step(&cpu, &bus)
+
+	testing.expect(t, ok, "Expected ADC A, imm8 with clear carry to succeed")
+	testing.expect(t, cpu.a == 0x0F, "Expected ADC A, imm8 not to add a cleared carry")
+	testing.expect(t, cpu.f == 0x00, "Expected ADC A, imm8 to replace the previous flags")
+	testing.expect(t, cpu.pc == 0x0102, "Expected ADC A, imm8 to advance PC by 2")
+	testing.expect(t, cycles == 2, "Expected ADC A, imm8 to take 2 cycles")
+}
+
+@(test)
+test_sub_a_imm8_wraps_and_sets_half_borrow_and_borrow :: proc(t: ^testing.T) {
+	bus := make_test_bus([]u8{0xD6, 0x01})
+	cpu := make_test_cpu()
+	cpu.a = 0x00
+	cpu.f = 0xAF
+
+	cycles, ok := gb.Cpu_step(&cpu, &bus)
+
+	testing.expect(t, ok, "Expected SUB A, imm8 to succeed")
+	testing.expect(t, cpu.a == 0xFF, "Expected SUB A, imm8 result to wrap to 0xFF")
+	testing.expect(t, cpu.f == 0x70, "Expected SUB A, imm8 to set N, H, and C")
+	testing.expect(t, cpu.pc == 0x0102, "Expected SUB A, imm8 to advance PC by 2")
+	testing.expect(t, cycles == 2, "Expected SUB A, imm8 to take 2 cycles")
+}
+
+@(test)
+test_sbc_a_imm8_includes_carry_in_half_borrow_and_borrow :: proc(t: ^testing.T) {
+	bus := make_test_bus([]u8{0xDE, 0x00})
+	cpu := make_test_cpu()
+	cpu.a = 0x00
+	cpu.f = 0x1F
+
+	cycles, ok := gb.Cpu_step(&cpu, &bus)
+
+	testing.expect(t, ok, "Expected SBC A, imm8 to succeed")
+	testing.expect(t, cpu.a == 0xFF, "Expected SBC A, imm8 to subtract the incoming carry")
+	testing.expect(
+		t,
+		cpu.f == 0x70,
+		"Expected SBC A, imm8 carry input to cause half-borrow and borrow",
+	)
+	testing.expect(t, cpu.pc == 0x0102, "Expected SBC A, imm8 to advance PC by 2")
+	testing.expect(t, cycles == 2, "Expected SBC A, imm8 to take 2 cycles")
+}
+
+@(test)
+test_sbc_a_imm8_with_clear_carry_does_not_subtract_carry :: proc(t: ^testing.T) {
+	bus := make_test_bus([]u8{0xDE, 0x0F})
+	cpu := make_test_cpu()
+	cpu.a = 0x10
+	cpu.f = 0xEF
+
+	cycles, ok := gb.Cpu_step(&cpu, &bus)
+
+	testing.expect(t, ok, "Expected SBC A, imm8 with clear carry to succeed")
+	testing.expect(t, cpu.a == 0x01, "Expected SBC A, imm8 not to subtract a cleared carry")
+	testing.expect(t, cpu.f == 0x60, "Expected SBC A, imm8 to set N and H without full borrow")
+	testing.expect(t, cpu.pc == 0x0102, "Expected SBC A, imm8 to advance PC by 2")
+	testing.expect(t, cycles == 2, "Expected SBC A, imm8 to take 2 cycles")
+}
+
+@(test)
+test_and_a_imm8_sets_zero_and_only_half_carry :: proc(t: ^testing.T) {
+	bus := make_test_bus([]u8{0xE6, 0x0F})
+	cpu := make_test_cpu()
+	cpu.a = 0xF0
+	cpu.f = 0xDF
+
+	cycles, ok := gb.Cpu_step(&cpu, &bus)
+
+	testing.expect(t, ok, "Expected AND A, imm8 to succeed")
+	testing.expect(t, cpu.a == 0x00, "Expected AND A, imm8 to store the bitwise result in A")
+	testing.expect(t, cpu.f == 0xA0, "Expected AND A, imm8 to set Z and H only")
+	testing.expect(t, cpu.pc == 0x0102, "Expected AND A, imm8 to advance PC by 2")
+	testing.expect(t, cycles == 2, "Expected AND A, imm8 to take 2 cycles")
+}
+
+@(test)
+test_xor_a_imm8_sets_result_and_clears_all_flags :: proc(t: ^testing.T) {
+	bus := make_test_bus([]u8{0xEE, 0x0F})
+	cpu := make_test_cpu()
+	cpu.a = 0xF0
+	cpu.f = 0xFF
+
+	cycles, ok := gb.Cpu_step(&cpu, &bus)
+
+	testing.expect(t, ok, "Expected XOR A, imm8 to succeed")
+	testing.expect(t, cpu.a == 0xFF, "Expected XOR A, imm8 to store the bitwise result in A")
+	testing.expect(t, cpu.f == 0x00, "Expected nonzero XOR A, imm8 to clear all flags")
+	testing.expect(t, cpu.pc == 0x0102, "Expected XOR A, imm8 to advance PC by 2")
+	testing.expect(t, cycles == 2, "Expected XOR A, imm8 to take 2 cycles")
+}
+
+@(test)
+test_or_a_imm8_sets_zero_and_clears_other_flags :: proc(t: ^testing.T) {
+	bus := make_test_bus([]u8{0xF6, 0x00})
+	cpu := make_test_cpu()
+	cpu.a = 0x00
+	cpu.f = 0x7F
+
+	cycles, ok := gb.Cpu_step(&cpu, &bus)
+
+	testing.expect(t, ok, "Expected OR A, imm8 to succeed")
+	testing.expect(t, cpu.a == 0x00, "Expected OR A, imm8 to store the bitwise result in A")
+	testing.expect(t, cpu.f == 0x80, "Expected zero OR A, imm8 to set only Z")
+	testing.expect(t, cpu.pc == 0x0102, "Expected OR A, imm8 to advance PC by 2")
+	testing.expect(t, cycles == 2, "Expected OR A, imm8 to take 2 cycles")
+}
+
+@(test)
+test_alu_imm8_fetch_wraps_across_end_of_address_space :: proc(t: ^testing.T) {
+	bus := make_test_bus([]u8{})
+	cpu := make_test_cpu()
+	cpu.pc = 0xFFFF
+	cpu.a = 0x01
+	gb.bus_write_byte(&bus, 0xFFFF, 0xC6)
+	gb.bus_write_byte(&bus, 0x0000, 0x02)
+
+	cycles, ok := gb.Cpu_step(&cpu, &bus)
+
+	testing.expect(t, ok, "Expected ADD A, imm8 across the address boundary to succeed")
+	testing.expect(
+		t,
+		cpu.a == 0x03,
+		"Expected ADD A, imm8 to fetch its operand from address 0x0000",
+	)
+	testing.expect(t, cpu.f == 0x00, "Expected boundary-crossing ADD A, imm8 to set no flags")
+	testing.expect(t, cpu.pc == 0x0001, "Expected the two-byte instruction PC to wrap to 0x0001")
+	testing.expect(t, cycles == 2, "Expected ADD A, imm8 to take 2 cycles")
+}
+
+@(test)
+test_cp_a_imm8_equal_sets_zero_and_subtract :: proc(t: ^testing.T) {
+	bus := make_test_bus([]u8{0xFE, 0x42})
+	cpu := make_test_cpu()
+	cpu.a = 0x42
+
+	cycles, ok := gb.Cpu_step(&cpu, &bus)
+
+	// 66 - 66 = 0, so Z is set.
+	// CP is a subtraction operation, so N is always set.
+	// The lower nibble is 2 - 2, so no half-borrow is needed and H is clear.
+	// 66 is not less than 66, so no full borrow is needed and C is clear.
+	// Flags: Z=1, N=1, H=0, C=0 -> 1100_0000 -> 0xC0.
+	testing.expect(t, ok, "Expected CP a, imm8 to succeed")
+	testing.expect(t, cycles == 2, "Expected CP a, imm8 to take 2 cycles")
+	testing.expect(t, cpu.pc == 0x0102, "Expected PC to advance by 2")
+	testing.expect(t, cpu.a == 0x42, "Expected CP to leave A unchanged")
+	testing.expect(t, cpu.f == 0xC0, "Expected Z=1, N=1, H=0, C=0")
 }

@@ -87,11 +87,6 @@ Cpu_step :: proc(cpu: ^Cpu, bus: ^Bus) -> (cycles: int, ok: bool) {
 		cpu.pc = address
 		cycles = 4
 		ok = true
-	case 0xFE:
-		// cp a, imm8
-		cpu_cp_a_imm8(cpu, cpu_fetch_u8(cpu, bus))
-		cycles = 2
-		ok = true
 	case 0x01, 0x11, 0x21, 0x31:
 		// ld r16, imm16
 		value := cpu_fetch_u16(cpu, bus)
@@ -291,6 +286,14 @@ Cpu_step :: proc(cpu: ^Cpu, bus: ^Bus) -> (cycles: int, ok: bool) {
 		}
 
 		ok = true
+	case 0xC6, 0xCE, 0xD6, 0xDE, 0xE6, 0xEE, 0xF6, 0xFE:
+		operation := (opcode >> 3) & 0b111
+		value := cpu_fetch_u8(cpu, bus)
+
+		cpu_execute_alu(cpu, operation, value)
+
+		cycles = 2
+		ok = true
 	case:
 		fmt.printf("Unimplemented opcode 0x%02X at 0x%04X\n", opcode, instruction_address)
 		cycles = 0
@@ -385,13 +388,6 @@ cpu_ccf :: proc(cpu: ^Cpu) {
 	cpu_set_flag(cpu, FLAG_N, false)
 	cpu_set_flag(cpu, FLAG_H, false)
 	cpu_set_flag(cpu, FLAG_C, carry)
-}
-
-cpu_cp_a_imm8 :: proc(cpu: ^Cpu, value: u8) {
-	cpu_set_flag(cpu, FLAG_Z, cpu.a == value)
-	cpu_set_flag(cpu, FLAG_N, true)
-	cpu_set_flag(cpu, FLAG_C, cpu.a < value)
-	cpu_set_flag(cpu, FLAG_H, (cpu.a & 0x0F) < (value & 0x0F))
 }
 
 cpu_fetch_u8 :: proc(cpu: ^Cpu, bus: ^Bus) -> u8 {
