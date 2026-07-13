@@ -1,6 +1,42 @@
 package gb
 
 // https://gbdev.io/pandocs/Memory_Map.html#memory-map
+@(private)
+KIB_128 :: 0x20000 // 128 KiB
+KIB_64 :: 0x10000 // 64 KiB
+KIB_32 :: 0x8000 // 32 KiB
+KIB_16 :: 0x4000 // 16 KiB
+KIB_8 :: 0x2000 // 8 KiB
+
+ROM_START :: u16(0x0000)
+ROM_END :: u16(0x7FFF)
+
+VRAM_START :: u16(0x8000)
+VRAM_END :: u16(0x9FFF)
+
+EXTERNAL_RAM_START :: u16(0xA000)
+EXTERNAL_RAM_END :: u16(0xBFFF)
+
+WRAM_START :: u16(0xC000)
+WRAM_END :: u16(0xDFFF)
+
+ECHO_RAM_START :: u16(0xE000)
+ECHO_RAM_END :: u16(0xFDFF)
+
+OAM_START :: u16(0xFE00)
+OAM_END :: u16(0xFE9F)
+
+UNUSABLE_START :: u16(0xFEA0)
+UNUSABLE_END :: u16(0xFEFF)
+
+IO_START :: u16(0xFF00)
+IO_END :: u16(0xFF7F)
+
+HRAM_START :: u16(0xFF80)
+HRAM_END :: u16(0xFFFE)
+
+IE_ADDRESS :: u16(0xFFFF)
+
 Bus :: struct {
 	cartridge: Cartridge,
 	vram:      [0x2000]u8, // 8 KiB Video RAM
@@ -26,25 +62,25 @@ Bus_destroy :: proc(bus: ^Bus, allocator := context.allocator) {
 
 bus_read_byte :: proc(bus: ^Bus, address: u16) -> u8 {
 	switch address {
-	case 0x0000 ..= 0x7FFF:
+	case ROM_START ..= ROM_END:
 		return cartridge_read(&bus.cartridge, address)
-	case 0x8000 ..= 0x9FFF:
-		return bus.vram[address - 0x8000]
-	case 0xA000 ..= 0xBFFF:
+	case VRAM_START ..= VRAM_END:
+		return bus.vram[address - VRAM_START]
+	case EXTERNAL_RAM_START ..= EXTERNAL_RAM_END:
 		return cartridge_read_ram(&bus.cartridge, address)
-	case 0xC000 ..= 0xDFFF:
-		return bus.wram[address - 0xC000]
-	case 0xE000 ..= 0xFDFF:
-		return bus.wram[address - 0xE000] // Mirror of wram
-	case 0xFE00 ..= 0xFE9F:
-		return bus.oam[address - 0xFE00]
-	case 0xFEA0 ..= 0xFEFF:
+	case WRAM_START ..= WRAM_END:
+		return bus.wram[address - WRAM_START]
+	case ECHO_RAM_START ..= ECHO_RAM_END:
+		return bus.wram[address - ECHO_RAM_START] // Mirror of wram
+	case OAM_START ..= OAM_END:
+		return bus.oam[address - OAM_START]
+	case UNUSABLE_START ..= UNUSABLE_END:
 		return 0xFF // Not usable
-	case 0xFF00 ..= 0xFF7F:
-		return bus.io[address - 0xFF00]
-	case 0xFF80 ..= 0xFFFE:
-		return bus.hram[address - 0xFF80]
-	case 0xFFFF:
+	case IO_START ..= IO_END:
+		return bus.io[address - IO_START]
+	case HRAM_START ..= HRAM_END:
+		return bus.hram[address - HRAM_START]
+	case IE_ADDRESS:
 		return bus.ie
 	}
 
@@ -53,25 +89,25 @@ bus_read_byte :: proc(bus: ^Bus, address: u16) -> u8 {
 
 bus_write_byte :: proc(bus: ^Bus, address: u16, value: u8) {
 	switch address {
-	case 0x0000 ..= 0x7FFF:
+	case ROM_START ..= ROM_END:
 		cartridge_write(&bus.cartridge, address, value)
-	case 0x8000 ..= 0x9FFF:
-		bus.vram[address - 0x8000] = value
-	case 0xA000 ..= 0xBFFF:
+	case VRAM_START ..= VRAM_END:
+		bus.vram[address - VRAM_START] = value
+	case EXTERNAL_RAM_START ..= EXTERNAL_RAM_END:
 		cartridge_write_ram(&bus.cartridge, address, value)
-	case 0xC000 ..= 0xDFFF:
-		bus.wram[address - 0xC000] = value
-	case 0xE000 ..= 0xFDFF:
-		bus.wram[address - 0xE000] = value
-	case 0xFE00 ..= 0xFE9F:
-		bus.oam[address - 0xFE00] = value
-	case 0xFEA0 ..= 0xFEFF:
+	case WRAM_START ..= WRAM_END:
+		bus.wram[address - WRAM_START] = value
+	case ECHO_RAM_START ..= ECHO_RAM_END:
+		bus.wram[address - ECHO_RAM_START] = value
+	case OAM_START ..= OAM_END:
+		bus.oam[address - OAM_START] = value
+	case UNUSABLE_START ..= UNUSABLE_END:
 	// ignored
-	case 0xFF00 ..= 0xFF7F:
-		bus.io[address - 0xFF00] = value
-	case 0xFF80 ..= 0xFFFE:
-		bus.hram[address - 0xFF80] = value
-	case 0xFFFF:
+	case IO_START ..= IO_END:
+		bus.io[address - IO_START] = value
+	case HRAM_START ..= HRAM_END:
+		bus.hram[address - HRAM_START] = value
+	case IE_ADDRESS:
 		bus.ie = value
 	}
 }

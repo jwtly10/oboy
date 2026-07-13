@@ -1,13 +1,16 @@
 package gb_tests
 
 import "../../src/gb"
+import "core:mem"
 import "core:testing"
 
 // --- Cartridge ROM and RAM mapping tests ---
 
 @(test)
-test_cartridge_maps_rom_and_returns_ff_beyond_loaded_data :: proc(t: ^testing.T) {
-	rom := []u8{0x12, 0x34}
+test_cartridge_maps_loaded_rom_data :: proc(t: ^testing.T) {
+	rom := make([]u8, 0x8000, context.temp_allocator)
+	rom[0x0000] = 0x12
+	rom[0x0001] = 0x34
 	bus := make_test_bus_from_rom(rom)
 
 	testing.expect(
@@ -22,19 +25,20 @@ test_cartridge_maps_rom_and_returns_ff_beyond_loaded_data :: proc(t: ^testing.T)
 	)
 	testing.expect(
 		t,
-		gb.bus_read_byte(&bus, 0x0002) == 0xFF,
-		"Expected unloaded ROM space to read as 0xFF",
+		gb.bus_read_byte(&bus, 0x0002) == 0x00,
+		"Expected zero-filled ROM data to remain mapped",
 	)
 	testing.expect(
 		t,
-		gb.bus_read_byte(&bus, 0x7FFF) == 0xFF,
-		"Expected the ROM boundary beyond loaded data to read as 0xFF",
+		gb.bus_read_byte(&bus, 0x7FFF) == 0x00,
+		"Expected the final byte of ROM to remain mapped",
 	)
 }
 
 @(test)
 test_cartridge_ignores_rom_writes_and_disabled_ram_writes :: proc(t: ^testing.T) {
-	rom := []u8{0x42}
+	rom := make([]u8, 0x8000, context.temp_allocator)
+	rom[0x0000] = 0x42
 	bus := make_test_bus_from_rom(rom)
 
 	gb.bus_write_byte(&bus, 0x0000, 0x99)
@@ -196,7 +200,7 @@ test_cartridge_ram_size_codes_limit_addressable_ram :: proc(t: ^testing.T) {
 		last_address:     u16,
 		outside_address:  u16,
 		has_outside_byte: bool,
-	}{{0x01, 0xA7FF, 0xA800, true}, {0x02, 0xBFFF, 0x0000, false}}
+	}{{0x02, 0xBFFF, 0x0000, false}}
 
 	for test_case in cases {
 		rom := make([]u8, 0x8000, context.temp_allocator)
@@ -260,7 +264,7 @@ test_mbc3_ram_enable_uses_low_nibble_at_both_register_boundaries :: proc(t: ^tes
 
 @(test)
 test_mbc3_rom_bank_register_masks_bit_seven_at_both_boundaries :: proc(t: ^testing.T) {
-	rom := make([]u8, 3 * 0x4000, context.temp_allocator)
+	rom := make([]u8, 4 * 0x4000, context.temp_allocator)
 	rom[0x4000] = 0x11
 	rom[0x8000] = 0x22
 	bus := make_test_bus_from_rom(rom, 0x13)
@@ -310,7 +314,7 @@ test_all_mbc3_cartridge_types_dispatch_bank_control_writes :: proc(t: ^testing.T
 	cartridge_types := [5]u8{0x0F, 0x10, 0x11, 0x12, 0x13}
 
 	for cartridge_type in cartridge_types {
-		rom := make([]u8, 3 * 0x4000, context.temp_allocator)
+		rom := make([]u8, 4 * 0x4000, context.temp_allocator)
 		rom[0x8000] = 0x22
 		bus := make_test_bus_from_rom(rom, cartridge_type)
 
@@ -323,21 +327,100 @@ test_all_mbc3_cartridge_types_dispatch_bank_control_writes :: proc(t: ^testing.T
 	}
 }
 
+// --- Cartridge type validation tests ---
+
 @(test)
-test_rom_only_and_unsupported_cartridges_ignore_bank_control_writes :: proc(t: ^testing.T) {
-	cartridge_types := [2]u8{0x00, 0x01}
+test_supported_cartridge_types_initialize :: proc(t: ^testing.T) {
+	cartridge_types := [6]u8{0x00, 0x0F, 0x10, 0x11, 0x12, 0x13}
+	rom := make([]u8, 0x8000, context.temp_allocator)
 
 	for cartridge_type in cartridge_types {
-		rom := make([]u8, 3 * 0x4000, context.temp_allocator)
-		rom[0x4000] = 0x11
-		rom[0x8000] = 0x22
-		bus := make_test_bus_from_rom(rom, cartridge_type)
+		header := gb.ROM_Header {
+			cartridge_type = cartridge_type,
+		}
+		bus, ok := gb.Bus_init(rom, &header)
 
-		gb.bus_write_byte(&bus, 0x2000, 0x02)
+		testing.expect(t, ok, "Expected every implemented cartridge type to initialize")
+		if ok {
+			gb.Bus_destroy(&bus)
+		}
+	}
+}
+
+@(test)
+test_unimplemented_and_unknown_cartridge_types_fail_initialization_without_leaking :: proc(
+	t: ^testing.T,
+) {
+	cartridge_types := [7]u8{0x01, 0x02, 0x03, 0x19, 0x1A, 0x1B, 0xFF}
+	rom := make([]u8, 0x8000, context.temp_allocator)
+	tracker: mem.Tracking_Allocator
+	mem.tracking_allocator_init(&tracker, context.temp_allocator, context.temp_allocator)
+	defer mem.tracking_allocator_destroy(&tracker)
+	allocator := mem.tracking_allocator(&tracker)
+
+	for cartridge_type in cartridge_types {
+		header := gb.ROM_Header {
+			cartridge_type = cartridge_type,
+			ram_size_code  = 0x03,
+		}
+		_, ok := gb.Bus_init(rom, &header, allocator)
+
 		testing.expect(
 			t,
-			gb.bus_read_byte(&bus, 0x4000) == 0x11,
-			"Expected cartridges without implemented controllers to ignore bank writes",
+			!ok,
+			"Expected unimplemented and unknown cartridge types to fail initialization",
 		)
 	}
+
+	testing.expect(
+		t,
+		len(tracker.allocation_map) == 0,
+		"Expected failed cartridge initialization to release allocated RAM",
+	)
+}
+
+@(test)
+test_unused_ram_size_code_does_not_provide_cartridge_ram :: proc(t: ^testing.T) {
+	rom := make([]u8, 0x8000, context.temp_allocator)
+	bus := make_test_bus_from_rom(rom, 0x13, 0x01)
+
+	gb.bus_write_byte(&bus, 0x0000, 0x0A)
+	gb.bus_write_byte(&bus, 0xA000, 0x5A)
+
+	testing.expect(
+		t,
+		gb.bus_read_byte(&bus, 0xA000) == 0xFF,
+		"Expected unused RAM size code 0x01 not to provide cartridge RAM",
+	)
+}
+
+@(test)
+test_mbc3_unmapped_ram_bank_wraps_to_installed_ram :: proc(t: ^testing.T) {
+	rom := make([]u8, 0x8000, context.temp_allocator)
+	bus := make_test_bus_from_rom(rom, 0x13, 0x02)
+
+	gb.bus_write_byte(&bus, 0x0000, 0x0A)
+	gb.bus_write_byte(&bus, 0x4000, 0x00)
+	gb.bus_write_byte(&bus, 0xA000, 0x37)
+	gb.bus_write_byte(&bus, 0x4000, 0x01)
+
+	testing.expect(
+		t,
+		gb.bus_read_byte(&bus, 0xA000) == 0x37,
+		"Expected an unmapped MBC3 RAM bank to wrap to installed RAM",
+	)
+}
+
+@(test)
+test_unknown_ram_size_code_fails_initialization :: proc(t: ^testing.T) {
+	rom := make([]u8, 0x8000, context.temp_allocator)
+	header := gb.ROM_Header {
+		cartridge_type = 0x13,
+		rom_size_code  = 0x00,
+		ram_size_code  = 0x06,
+	}
+
+	_, ok := gb.Bus_init(rom, &header, context.temp_allocator)
+
+	testing.expect(t, !ok, "Expected an unknown RAM size code to fail initialization")
 }
