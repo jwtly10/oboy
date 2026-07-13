@@ -23,8 +23,10 @@ Cpu :: struct {
 	pc:            u16,
 	stopped:       bool,
 	halted:        bool,
+	halt_bug:      bool,
 	locked:        bool,
 	trace:         bool,
+	// Interrupt master enable flag
 	ime:           bool,
 	ime_scheduled: bool,
 }
@@ -84,6 +86,8 @@ Cpu_init_post_boot :: proc() -> Cpu {
 }
 
 Cpu_step :: proc(cpu: ^Cpu, bus: ^Bus) -> (cycles: int, ok: bool) {
+	ime_before_step := cpu.ime
+
 	// IME must come first since it needs to
 	// be able to be set even if CPU is halted
 	if cpu.ime_scheduled {
@@ -107,7 +111,7 @@ Cpu_step :: proc(cpu: ^Cpu, bus: ^Bus) -> (cycles: int, ok: bool) {
 	}
 
 	instruction_address := cpu.pc
-	opcode := cpu_fetch_u8(cpu, bus)
+	opcode := cpu_fetch_opcode(cpu, bus)
 
 	switch opcode {
 	case 0xD3, 0xDB, 0xDD, 0xE3, 0xE4, 0xEB, 0xEC, 0xED, 0xF4, 0xFC, 0xFD:
@@ -306,7 +310,12 @@ Cpu_step :: proc(cpu: ^Cpu, bus: ^Bus) -> (cycles: int, ok: bool) {
 		cycles = 1
 		if opcode == 0x76 {
 			// LD HL, HL Exception
-			cpu.halted = true
+			if !ime_before_step && interrupt_pending(bus) != 0 {
+				cpu.halted = false
+				cpu.halt_bug = true
+			} else {
+				cpu.halted = true
+			}
 			cycles = 1
 			ok = true
 			break
@@ -644,6 +653,17 @@ cpu_ccf :: proc(cpu: ^Cpu) {
 cpu_fetch_u8 :: proc(cpu: ^Cpu, bus: ^Bus) -> u8 {
 	value := bus_read_byte(bus, cpu.pc)
 	cpu.pc += 1
+	return value
+}
+
+// handling HALT behaviour in https://gbdev.io/pandocs/halt.html#halt-bug
+cpu_fetch_opcode :: proc(cpu: ^Cpu, bus: ^Bus) -> u8 {
+	value := bus_read_byte(bus, cpu.pc)
+	if cpu.halt_bug {
+		cpu.halt_bug = false
+	} else {
+		cpu.pc += 1
+	}
 	return value
 }
 

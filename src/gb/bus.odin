@@ -44,7 +44,8 @@ Bus :: struct {
 	oam:       [0xA0]u8, // 160 bytes
 	io:        [0x80]u8, // 128 bytes
 	hram:      [0x7F]u8, // 127 bytes
-	ie:        u8, // Interrupt Enable register
+	// Interrupt Enabled register
+	ie:        u8,
 }
 
 Bus_init :: proc(rom: []u8, header: ^ROM_Header, allocator := context.allocator) -> (Bus, bool) {
