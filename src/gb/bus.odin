@@ -83,7 +83,6 @@ bus_read_byte :: proc(bus: ^Bus, address: u16) -> u8 {
 	case IE_ADDRESS:
 		return bus.ie
 	}
-
 	unreachable()
 }
 

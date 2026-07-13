@@ -84,6 +84,13 @@ Cpu_init_post_boot :: proc() -> Cpu {
 }
 
 Cpu_step :: proc(cpu: ^Cpu, bus: ^Bus) -> (cycles: int, ok: bool) {
+	// IME must come first since it needs to
+	// be able to be set even if CPU is halted
+	if cpu.ime_scheduled {
+		cpu.ime = true
+		cpu.ime_scheduled = false
+	}
+
 	if (cpu.stopped) {
 		// No CPU cycles consumed
 		return 0, true
@@ -97,11 +104,6 @@ Cpu_step :: proc(cpu: ^Cpu, bus: ^Bus) -> (cycles: int, ok: bool) {
 	if cpu.locked {
 		// Invalid opcodes permanently lock the CPU until it is reinitialized.
 		return 1, true
-	}
-
-	if cpu.ime_scheduled {
-		cpu.ime = true
-		cpu.ime_scheduled = false
 	}
 
 	instruction_address := cpu.pc
