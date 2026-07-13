@@ -1,12 +1,12 @@
 package gb
 
-// https://gbdev.io/pandocs/Memory_Map.html#memory-map
-@(private)
 KIB_128 :: 0x20000 // 128 KiB
 KIB_64 :: 0x10000 // 64 KiB
 KIB_32 :: 0x8000 // 32 KiB
 KIB_16 :: 0x4000 // 16 KiB
 KIB_8 :: 0x2000 // 8 KiB
+
+// Memory Map
 
 ROM_START :: u16(0x0000)
 ROM_END :: u16(0x7FFF)
@@ -35,17 +35,36 @@ IO_END :: u16(0xFF7F)
 HRAM_START :: u16(0xFF80)
 HRAM_END :: u16(0xFFFE)
 
-IE_ADDRESS :: u16(0xFFFF)
+// Interrupt Addresses
 
+IE_ADDRESS :: u16(0xFFFF)
+INTERRUPT_FLAG_ADDRESS :: u16(0xFF0F)
+
+// Timer Address
+DIV_ADDRESS :: u16(0xFF04)
+TIMA_ADDRESS :: u16(0xFF05)
+TMA_ADDRESS :: u16(0xFF06)
+TAC_ADDRESS :: u16(0xFF07)
+
+Timer_Registers :: struct {
+	system_counter: u16,
+	tima:           u8,
+	tma:            u8,
+	tac:            u8,
+}
+
+// https://gbdev.io/pandocs/Memory_Map.html#memory-map
+// Bus handled the memory mapping of the emulator
 Bus :: struct {
-	cartridge: Cartridge,
-	vram:      [0x2000]u8, // 8 KiB Video RAM
-	wram:      [0x2000]u8, // 8 KiB Work RAM
-	oam:       [0xA0]u8, // 160 bytes
-	io:        [0x80]u8, // 128 bytes
-	hram:      [0x7F]u8, // 127 bytes
+	cartridge:  Cartridge,
+	vram:       [0x2000]u8, // 8 KiB Video RAM
+	wram:       [0x2000]u8, // 8 KiB Work RAM
+	oam:        [0xA0]u8, // 160 bytes
+	io:         [0x80]u8, // 128 bytes
+	hram:       [0x7F]u8, // 127 bytes
 	// Interrupt Enabled register
-	ie:        u8,
+	ie:         u8,
+	timer_regs: Timer_Registers,
 }
 
 Bus_init :: proc(rom: []u8, header: ^ROM_Header, allocator := context.allocator) -> (Bus, bool) {
@@ -77,6 +96,16 @@ bus_read_byte :: proc(bus: ^Bus, address: u16) -> u8 {
 		return bus.oam[address - OAM_START]
 	case UNUSABLE_START ..= UNUSABLE_END:
 		return 0xFF // Not usable
+	case DIV_ADDRESS:
+		// After 256 ticks, upper byte of s_c increases from 0 to 1
+		// So this produces an increment every 256 ticks
+		return u8(bus.timer_regs.system_counter >> 8)
+	case TIMA_ADDRESS:
+		return bus.timer_regs.tima
+	case TMA_ADDRESS:
+		return bus.timer_regs.tma
+	case TAC_ADDRESS:
+		return bus.timer_regs.tac
 	case IO_START ..= IO_END:
 		return bus.io[address - IO_START]
 	case HRAM_START ..= HRAM_END:
@@ -84,6 +113,7 @@ bus_read_byte :: proc(bus: ^Bus, address: u16) -> u8 {
 	case IE_ADDRESS:
 		return bus.ie
 	}
+
 	unreachable()
 }
 
@@ -103,6 +133,17 @@ bus_write_byte :: proc(bus: ^Bus, address: u16, value: u8) {
 		bus.oam[address - OAM_START] = value
 	case UNUSABLE_START ..= UNUSABLE_END:
 	// ignored
+	case DIV_ADDRESS:
+		// Any write resets DIV reg
+		// https://gbdev.io/pandocs/Timer_and_Divider_Registers.html#ff04--div-divider-register
+		bus.timer_regs.system_counter = 0
+	case TIMA_ADDRESS:
+		bus.timer_regs.tima = value
+	case TMA_ADDRESS:
+		bus.timer_regs.tma = value
+	case TAC_ADDRESS:
+		// bits 0-1 used to select clock speed
+		bus.timer_regs.tac = value & 0x07
 	case IO_START ..= IO_END:
 		bus.io[address - IO_START] = value
 	case HRAM_START ..= HRAM_END:

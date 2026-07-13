@@ -2,9 +2,6 @@ package gb
 
 import "core:fmt"
 
-@(private)
-INTERRUPT_FLAG_ADDRESS :: u16(0xFF0F)
-
 // https://gbdev.io/pandocs/Interrupts.html#ff0f--if-interrupt-flag
 Interrupt :: enum u8 {
 	VBLANK = 0,
@@ -68,8 +65,12 @@ Machine_step :: proc(machine: ^Machine) -> bool {
 	return true
 }
 
-machine_tick :: proc(machine: ^Machine, cycles: int) {
-
+machine_tick :: proc(machine: ^Machine, m_cycles: int) {
+	// We are tracking CPU op cycles in M Cycles
+	// so when talking to timer we use T Cycles
+	for _ in 0 ..< m_cycles * 4 {
+		timer_tick(&machine.bus)
+	}
 }
 
 // Checks IF register for interrupt
@@ -81,6 +82,12 @@ interrupt_pending :: proc(bus: ^Bus) -> u8 {
 	// 2. enabled in IE
 	// 3. valid interupt bits in pos 0-4
 	return iflags & bus.ie & 0x1F
+}
+
+interrupt_request :: proc(bus: ^Bus, interrupt: Interrupt) {
+	iflags := bus_read_byte(bus, INTERRUPT_FLAG_ADDRESS)
+	iflags |= u8(1 << u8(interrupt))
+	bus_write_byte(bus, INTERRUPT_FLAG_ADDRESS, iflags)
 }
 
 // https://gbdev.io/pandocs/Interrupts.html#interrupt-handling

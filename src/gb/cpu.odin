@@ -2,7 +2,6 @@ package gb
 
 import "core:fmt"
 
-@(private)
 FLAG_Z :: u8(1 << 7) // Zero flag
 FLAG_N :: u8(1 << 6) // Subtraction Flag (BCD)
 FLAG_H :: u8(1 << 5) // Half Carry flag (BCD)

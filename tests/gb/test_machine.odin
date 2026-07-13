@@ -232,3 +232,89 @@ test_machine_ei_then_halt_interrupt_returns_to_halt :: proc(t: ^testing.T) {
 		"Expected interrupt service to consume the HALT bug state",
 	)
 }
+
+// -- Timer tests --
+
+@(test)
+test_div_increments_after_64_m_cycles :: proc(t: ^testing.T) {
+	machine := make_test_machine([]u8{0x00})
+
+	gb.machine_tick(&machine, 63)
+	testing.expect(
+		t,
+		gb.bus_read_byte(&machine.bus, 0xFF04) == 0,
+		"Expected DIV to remain zero before 256 T-cycles",
+	)
+
+	gb.machine_tick(&machine, 1)
+	testing.expect(
+		t,
+		gb.bus_read_byte(&machine.bus, 0xFF04) == 1,
+		"Expected DIV to increment after 256 T-cycles",
+	)
+}
+
+@(test)
+test_writing_div_resets_system_counter :: proc(t: ^testing.T) {
+	machine := make_test_machine([]u8{0x00})
+
+	gb.machine_tick(&machine, 64)
+	gb.bus_write_byte(&machine.bus, 0xFF04, 0x99)
+
+	testing.expect(
+		t,
+		gb.bus_read_byte(&machine.bus, 0xFF04) == 0,
+		"Expected any write to DIV to reset it",
+	)
+}
+
+@(test)
+test_disabled_timer_does_not_increment_tima :: proc(t: ^testing.T) {
+	machine := make_test_machine([]u8{0x00})
+
+	gb.bus_write_byte(&machine.bus, 0xFF07, 0x01)
+	gb.machine_tick(&machine, 4)
+
+	testing.expect(
+		t,
+		gb.bus_read_byte(&machine.bus, 0xFF05) == 0,
+		"Expected TIMA not to increment while timer is disabled",
+	)
+}
+
+@(test)
+test_timer_frequency_01_increments_after_4_m_cycles :: proc(t: ^testing.T) {
+	machine := make_test_machine([]u8{0x00})
+
+	gb.bus_write_byte(&machine.bus, 0xFF07, 0x05)
+	gb.machine_tick(&machine, 4)
+
+	testing.expect(
+		t,
+		gb.bus_read_byte(&machine.bus, 0xFF05) == 1,
+		"Expected TIMA to increment after 4 M-cycles",
+	)
+}
+
+@(test)
+test_tima_overflow_reloads_tma_and_requests_interrupt :: proc(t: ^testing.T) {
+	machine := make_test_machine([]u8{0x00})
+
+	gb.bus_write_byte(&machine.bus, 0xFF05, 0xFF)
+	gb.bus_write_byte(&machine.bus, 0xFF06, 0x42)
+	gb.bus_write_byte(&machine.bus, 0xFF07, 0x05)
+
+	gb.machine_tick(&machine, 4)
+
+	testing.expect(
+		t,
+		gb.bus_read_byte(&machine.bus, 0xFF05) == 0x42,
+		"Expected TIMA to reload from TMA after overflow",
+	)
+
+	testing.expect(
+		t,
+		gb.bus_read_byte(&machine.bus, 0xFF0F) & 0x04 != 0,
+		"Expected TIMA overflow to request Timer interrupt",
+	)
+}
