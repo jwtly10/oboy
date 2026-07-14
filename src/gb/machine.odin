@@ -61,6 +61,9 @@ Machine_step :: proc(machine: ^Machine) -> bool {
 		return false
 	}
 
+	// FIXME: Hardware is currently advanced only after the entire
+	// instruction has executed. To properly emulate timer need
+	// to perform read/writes at specific M-Cycles
 	machine_tick(machine, cycles)
 	return true
 }

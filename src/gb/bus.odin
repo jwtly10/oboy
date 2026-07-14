@@ -46,11 +46,19 @@ TIMA_ADDRESS :: u16(0xFF05)
 TMA_ADDRESS :: u16(0xFF06)
 TAC_ADDRESS :: u16(0xFF07)
 
+timer_overflow_cycle :: enum {
+	NONE,
+	CYCLE_A,
+	CYCLE_B,
+}
+
 Timer_Registers :: struct {
 	system_counter: u16,
 	tima:           u8,
 	tma:            u8,
 	tac:            u8,
+	overflow_phase: timer_overflow_cycle,
+	overflow_delay: u8,
 }
 
 // https://gbdev.io/pandocs/Memory_Map.html#memory-map
@@ -138,9 +146,9 @@ bus_write_byte :: proc(bus: ^Bus, address: u16, value: u8) {
 		// https://gbdev.io/pandocs/Timer_and_Divider_Registers.html#ff04--div-divider-register
 		bus.timer_regs.system_counter = 0
 	case TIMA_ADDRESS:
-		bus.timer_regs.tima = value
+		timer_write_tima(bus, value)
 	case TMA_ADDRESS:
-		bus.timer_regs.tma = value
+		timer_write_tma(bus, value)
 	case TAC_ADDRESS:
 		// bits 0-1 used to select clock speed
 		bus.timer_regs.tac = value & 0x07

@@ -308,14 +308,26 @@ test_tima_overflow_reloads_tma_and_requests_interrupt :: proc(t: ^testing.T) {
 
 	testing.expect(
 		t,
-		gb.bus_read_byte(&machine.bus, 0xFF05) == 0x42,
-		"Expected TIMA to reload from TMA after overflow",
+		gb.bus_read_byte(&machine.bus, 0xFF05) == 0x00,
+		"Expected TIMA to remain zero during the overflow delay",
 	)
+	testing.expect(
+		t,
+		gb.bus_read_byte(&machine.bus, 0xFF0F) & 0x04 == 0,
+		"Expected Timer interrupt to remain clear during the overflow delay",
+	)
+
+	gb.machine_tick(&machine, 1)
 
 	testing.expect(
 		t,
+		gb.bus_read_byte(&machine.bus, 0xFF05) == 0x42,
+		"Expected TIMA to reload from TMA one M-cycle after overflow",
+	)
+	testing.expect(
+		t,
 		gb.bus_read_byte(&machine.bus, 0xFF0F) & 0x04 != 0,
-		"Expected TIMA overflow to request Timer interrupt",
+		"Expected TIMA reload to request Timer interrupt",
 	)
 }
 
@@ -397,8 +409,118 @@ test_tima_overflow_preserves_unrelated_interrupt_flags :: proc(t: ^testing.T) {
 
 	testing.expect(
 		t,
+		gb.bus_read_byte(&machine.bus, 0xFF0F) == 0x11,
+		"Expected interrupt flags to remain unchanged during the overflow delay",
+	)
+
+	gb.machine_tick(&machine, 1)
+
+	testing.expect(
+		t,
 		gb.bus_read_byte(&machine.bus, 0xFF0F) == 0x15,
 		"Expected timer overflow to set only the Timer interrupt flag",
+	)
+}
+
+// --- Timer overflow write tests ---
+
+@(test)
+test_writing_tima_during_overflow_delay_cancels_reload_and_interrupt :: proc(t: ^testing.T) {
+	machine := make_test_machine([]u8{0x00})
+	gb.bus_write_byte(&machine.bus, 0xFF05, 0xFF)
+	gb.bus_write_byte(&machine.bus, 0xFF06, 0x42)
+	gb.bus_write_byte(&machine.bus, 0xFF07, 0x05)
+
+	gb.machine_tick(&machine, 4)
+	gb.bus_write_byte(&machine.bus, 0xFF05, 0x77)
+	gb.machine_tick(&machine, 1)
+
+	testing.expect(
+		t,
+		gb.bus_read_byte(&machine.bus, 0xFF05) == 0x77,
+		"Expected TIMA write to replace zero and cancel the pending reload",
+	)
+	testing.expect(
+		t,
+		gb.bus_read_byte(&machine.bus, 0xFF0F) & 0x04 == 0,
+		"Expected TIMA write to cancel the pending Timer interrupt",
+	)
+}
+
+@(test)
+test_writing_tma_during_overflow_delay_changes_pending_reload_value :: proc(t: ^testing.T) {
+	machine := make_test_machine([]u8{0x00})
+	gb.bus_write_byte(&machine.bus, 0xFF05, 0xFF)
+	gb.bus_write_byte(&machine.bus, 0xFF06, 0x42)
+	gb.bus_write_byte(&machine.bus, 0xFF07, 0x05)
+
+	gb.machine_tick(&machine, 4)
+	gb.bus_write_byte(&machine.bus, 0xFF06, 0x66)
+	gb.machine_tick(&machine, 1)
+
+	testing.expect(
+		t,
+		gb.bus_read_byte(&machine.bus, 0xFF06) == 0x66,
+		"Expected TMA write to update the modulo register",
+	)
+	testing.expect(
+		t,
+		gb.bus_read_byte(&machine.bus, 0xFF05) == 0x66,
+		"Expected pending reload to use the updated TMA value",
+	)
+	testing.expect(
+		t,
+		gb.bus_read_byte(&machine.bus, 0xFF0F) & 0x04 != 0,
+		"Expected pending reload to request Timer interrupt",
+	)
+}
+
+@(test)
+test_timer_can_overflow_again_after_reload_phase_completes :: proc(t: ^testing.T) {
+	machine := make_test_machine([]u8{0x00})
+	gb.bus_write_byte(&machine.bus, 0xFF05, 0xFF)
+	gb.bus_write_byte(&machine.bus, 0xFF06, 0xFF)
+	gb.bus_write_byte(&machine.bus, 0xFF07, 0x05)
+
+	gb.machine_tick(&machine, 5)
+	gb.bus_write_byte(&machine.bus, 0xFF0F, 0x00)
+	gb.machine_tick(&machine, 2)
+
+	testing.expect(
+		t,
+		gb.bus_read_byte(&machine.bus, 0xFF05) == 0xFF,
+		"Expected TIMA to remain at TMA before the next timer period",
+	)
+	testing.expect(
+		t,
+		gb.bus_read_byte(&machine.bus, 0xFF0F) & 0x04 == 0,
+		"Expected no second Timer interrupt before another overflow",
+	)
+
+	gb.machine_tick(&machine, 1)
+
+	testing.expect(
+		t,
+		gb.bus_read_byte(&machine.bus, 0xFF05) == 0x00,
+		"Expected the next timer increment to overflow TIMA again",
+	)
+	testing.expect(
+		t,
+		gb.bus_read_byte(&machine.bus, 0xFF0F) & 0x04 == 0,
+		"Expected the second Timer interrupt to wait for the reload",
+	)
+
+	gb.machine_tick(&machine, 1)
+
+	testing.expect(
+		t,
+		gb.bus_read_byte(&machine.bus, 0xFF05) == 0xFF,
+		"Expected the second overflow to reload TMA",
+	)
+	testing.expect(
+		t,
+		gb.bus_read_byte(&machine.bus, 0xFF0F) & 0x04 != 0,
+		"Expected the second reload to request Timer interrupt",
 	)
 }
 
