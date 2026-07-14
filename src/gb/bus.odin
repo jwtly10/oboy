@@ -113,7 +113,10 @@ bus_read_byte :: proc(bus: ^Bus, address: u16) -> u8 {
 	case TMA_ADDRESS:
 		return bus.timer_regs.tma
 	case TAC_ADDRESS:
-		return bus.timer_regs.tac
+		// Only the lowest 3 bits are used
+		// the rest are treated as 1
+		// Bitwise OR 1111_1000
+		return bus.timer_regs.tac | 0xF8
 	case IO_START ..= IO_END:
 		return bus.io[address - IO_START]
 	case HRAM_START ..= HRAM_END:
@@ -142,16 +145,13 @@ bus_write_byte :: proc(bus: ^Bus, address: u16, value: u8) {
 	case UNUSABLE_START ..= UNUSABLE_END:
 	// ignored
 	case DIV_ADDRESS:
-		// Any write resets DIV reg
-		// https://gbdev.io/pandocs/Timer_and_Divider_Registers.html#ff04--div-divider-register
-		bus.timer_regs.system_counter = 0
+		timer_write_div(bus, value)
 	case TIMA_ADDRESS:
 		timer_write_tima(bus, value)
 	case TMA_ADDRESS:
 		timer_write_tma(bus, value)
 	case TAC_ADDRESS:
-		// bits 0-1 used to select clock speed
-		bus.timer_regs.tac = value & 0x07
+		timer_write_tac(bus, value)
 	case IO_START ..= IO_END:
 		bus.io[address - IO_START] = value
 	case HRAM_START ..= HRAM_END:

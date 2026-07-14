@@ -524,6 +524,150 @@ test_timer_can_overflow_again_after_reload_phase_completes :: proc(t: ^testing.T
 	)
 }
 
+// --- DIV and TAC write-edge tests ---
+
+@(test)
+test_writing_div_increments_tima_when_selected_input_is_high :: proc(t: ^testing.T) {
+	cases := [?]struct {
+		tac:           u8,
+		high_m_cycles: int,
+	}{{0x04, 128}, {0x05, 2}, {0x06, 8}, {0x07, 32}}
+
+	for test_case in cases {
+		machine := make_test_machine([]u8{0x00})
+		gb.bus_write_byte(&machine.bus, 0xFF07, test_case.tac)
+		gb.machine_tick(&machine, test_case.high_m_cycles)
+
+		testing.expectf(
+			t,
+			gb.bus_read_byte(&machine.bus, 0xFF05) == 0,
+			"Expected TAC 0x%02X not to increment before its falling edge",
+			test_case.tac,
+		)
+
+		gb.bus_write_byte(&machine.bus, 0xFF04, 0x99)
+
+		testing.expectf(
+			t,
+			gb.bus_read_byte(&machine.bus, 0xFF04) == 0,
+			"Expected DIV write to reset the counter for TAC 0x%02X",
+			test_case.tac,
+		)
+		testing.expectf(
+			t,
+			gb.bus_read_byte(&machine.bus, 0xFF05) == 1,
+			"Expected DIV write to create a falling edge for TAC 0x%02X",
+			test_case.tac,
+		)
+	}
+}
+
+@(test)
+test_writing_div_does_not_increment_tima_when_input_is_low_or_disabled :: proc(t: ^testing.T) {
+	low_machine := make_test_machine([]u8{0x00})
+	gb.bus_write_byte(&low_machine.bus, 0xFF07, 0x05)
+	gb.bus_write_byte(&low_machine.bus, 0xFF04, 0x00)
+
+	testing.expect(
+		t,
+		gb.bus_read_byte(&low_machine.bus, 0xFF05) == 0,
+		"Expected DIV write not to increment TIMA when the selected input is low",
+	)
+
+	disabled_machine := make_test_machine([]u8{0x00})
+	gb.bus_write_byte(&disabled_machine.bus, 0xFF07, 0x01)
+	gb.machine_tick(&disabled_machine, 2)
+	gb.bus_write_byte(&disabled_machine.bus, 0xFF04, 0x00)
+
+	testing.expect(
+		t,
+		gb.bus_read_byte(&disabled_machine.bus, 0xFF05) == 0,
+		"Expected DIV write not to increment TIMA while the timer is disabled",
+	)
+}
+
+@(test)
+test_writing_tac_increments_tima_only_on_falling_input_transitions :: proc(t: ^testing.T) {
+	cases := [?]struct {
+		old_tac:          u8,
+		new_tac:          u8,
+		advance_m_cycles: int,
+		expected_tima:    u8,
+	} {
+		{0x05, 0x06, 2, 1}, // Selected input changes from bit 3 high to bit 5 low.
+		{0x06, 0x05, 2, 0}, // Selected input changes from bit 5 low to bit 3 high.
+		{0x05, 0x06, 10, 0}, // Both selected inputs are high.
+		{0x05, 0x06, 0, 0}, // Both selected inputs are low.
+		{0x05, 0x01, 2, 1}, // DMG disabling while the selected input is high.
+		{0x05, 0x01, 0, 0}, // Disabling while the selected input is low.
+		{0x05, 0x05, 2, 0}, // Rewriting the same high input creates no edge.
+	}
+
+	for test_case in cases {
+		machine := make_test_machine([]u8{0x00})
+		gb.machine_tick(&machine, test_case.advance_m_cycles)
+		gb.bus_write_byte(&machine.bus, 0xFF07, test_case.old_tac)
+		gb.bus_write_byte(&machine.bus, 0xFF07, test_case.new_tac)
+
+		testing.expectf(
+			t,
+			gb.bus_read_byte(&machine.bus, 0xFF05) == test_case.expected_tima,
+			"Expected TAC change 0x%02X -> 0x%02X to leave TIMA at 0x%02X",
+			test_case.old_tac,
+			test_case.new_tac,
+			test_case.expected_tima,
+		)
+	}
+}
+
+@(test)
+test_writing_tac_masks_unused_bits :: proc(t: ^testing.T) {
+	machine := make_test_machine([]u8{0x00})
+
+	gb.bus_write_byte(&machine.bus, 0xFF07, 0xFF)
+
+	testing.expect(
+		t,
+		gb.bus_read_byte(&machine.bus, 0xFF07) == 0xFF,
+		"Expected TAC unused bits to read high after writing all bits",
+	)
+}
+
+@(test)
+test_tac_write_falling_edge_uses_delayed_overflow_reload :: proc(t: ^testing.T) {
+	machine := make_test_machine([]u8{0x00})
+	gb.machine_tick(&machine, 2)
+	gb.bus_write_byte(&machine.bus, 0xFF05, 0xFF)
+	gb.bus_write_byte(&machine.bus, 0xFF06, 0x42)
+	gb.bus_write_byte(&machine.bus, 0xFF07, 0x05)
+
+	gb.bus_write_byte(&machine.bus, 0xFF07, 0x01)
+
+	testing.expect(
+		t,
+		gb.bus_read_byte(&machine.bus, 0xFF05) == 0x00,
+		"Expected TAC write falling edge to overflow TIMA to zero",
+	)
+	testing.expect(
+		t,
+		gb.bus_read_byte(&machine.bus, 0xFF0F) & 0x04 == 0,
+		"Expected TAC write overflow not to request Timer interrupt immediately",
+	)
+
+	gb.machine_tick(&machine, 1)
+
+	testing.expect(
+		t,
+		gb.bus_read_byte(&machine.bus, 0xFF05) == 0x42,
+		"Expected TAC write overflow to reload TMA after one M-cycle",
+	)
+	testing.expect(
+		t,
+		gb.bus_read_byte(&machine.bus, 0xFF0F) & 0x04 != 0,
+		"Expected TAC write overflow reload to request Timer interrupt",
+	)
+}
+
 @(test)
 test_timer_advances_while_cpu_is_halted :: proc(t: ^testing.T) {
 	machine := make_test_machine([]u8{0x76})

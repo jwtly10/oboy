@@ -12,30 +12,47 @@ timer_tick :: proc(bus: ^Bus) {
 
 	new_input := timer_input(regs.system_counter, tac)
 
+	// Falling edge detection:
+	// Based on the DIV & Tac, we check if the required bit is HIGH
+	// before and after incrementing system counter
+	// Inputs are true if high
+	// so we are basically saying, if was high, but now not high (1->0)
+	// so triggers TIMA increment
 	if old_input && !new_input {
 		timer_increment_tima(bus)
 	}
 }
 
-timer_input :: proc(counter: u16, tac: u8) -> bool {
-	if tac & 0x04 == 0 {
-		return false
+timer_write_div :: proc(bus: ^Bus, value: u8) {
+	regs := &bus.timer_regs
+	tac := regs.tac
+
+	old_input := timer_input(regs.system_counter, tac)
+
+	// Writing to div resets internal divider counter
+	regs.system_counter = 0
+
+	new_input := timer_input(regs.system_counter, tac)
+
+	// FED
+	if old_input && !new_input {
+		timer_increment_tima(bus)
 	}
+}
 
-	bit: u16
+timer_write_tac :: proc(bus: ^Bus, value: u8) {
+	regs := &bus.timer_regs
 
-	switch tac & 0x03 {
-	case 0x00:
-		bit = 9
-	case 0x01:
-		bit = 3
-	case 0x02:
-		bit = 5
-	case 0x03:
-		bit = 7
+	old_input := timer_input(regs.system_counter, regs.tac)
+
+	// the only bits we care about are 0,1,2
+	regs.tac = value & 0x07
+
+	new_input := timer_input(regs.system_counter, regs.tac)
+
+	if old_input && !new_input {
+		timer_increment_tima(bus)
 	}
-
-	return counter & (u16(1) << bit) != 0
 }
 
 // Helper for writing to TIMA
@@ -112,4 +129,32 @@ timer_overflow_check :: proc(bus: ^Bus) {
 			regs.overflow_phase = .NONE
 		}
 	}
+}
+
+// https://github.com/Ashiepaws/GBEDG/blob/master/timers/index.md
+// Generates a signal based on CPU clock and tac
+// 1. Tac must have enabled bit
+// 2. Bit 0-1 of TAC decides which counter bit we care about
+// 3. Counter & mask are ANDed to see if required bit is high (and tac enabled implicitly)
+// Returns if signal is high
+timer_input :: proc(counter: u16, tac: u8) -> bool {
+	// 'Enabled' bit
+	if tac & 0x04 == 0 {
+		return false
+	}
+
+	bit: u16
+
+	switch tac & 0x03 {
+	case 0x00:
+		bit = 9
+	case 0x01:
+		bit = 3
+	case 0x02:
+		bit = 5
+	case 0x03:
+		bit = 7
+	}
+
+	return counter & (u16(1) << bit) != 0
 }
