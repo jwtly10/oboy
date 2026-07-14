@@ -318,3 +318,110 @@ test_tima_overflow_reloads_tma_and_requests_interrupt :: proc(t: ^testing.T) {
 		"Expected TIMA overflow to request Timer interrupt",
 	)
 }
+
+// --- Timer core tests ---
+
+@(test)
+test_all_timer_frequencies_increment_on_their_selected_period :: proc(t: ^testing.T) {
+	cases := [?]struct {
+		tac:             u8,
+		period_m_cycles: int,
+	}{{0x04, 256}, {0x05, 4}, {0x06, 16}, {0x07, 64}}
+
+	for test_case in cases {
+		machine := make_test_machine([]u8{0x00})
+		gb.bus_write_byte(&machine.bus, 0xFF07, test_case.tac)
+
+		gb.machine_tick(&machine, test_case.period_m_cycles - 1)
+		testing.expectf(
+			t,
+			gb.bus_read_byte(&machine.bus, 0xFF05) == 0,
+			"Expected TAC 0x%02X not to increment TIMA before %d M-cycles",
+			test_case.tac,
+			test_case.period_m_cycles,
+		)
+
+		gb.machine_tick(&machine, 1)
+		testing.expectf(
+			t,
+			gb.bus_read_byte(&machine.bus, 0xFF05) == 1,
+			"Expected TAC 0x%02X to increment TIMA after %d M-cycles",
+			test_case.tac,
+			test_case.period_m_cycles,
+		)
+	}
+}
+
+@(test)
+test_timer_increments_tima_across_multiple_periods :: proc(t: ^testing.T) {
+	machine := make_test_machine([]u8{0x00})
+	gb.bus_write_byte(&machine.bus, 0xFF07, 0x05)
+
+	gb.machine_tick(&machine, 12)
+
+	testing.expect(
+		t,
+		gb.bus_read_byte(&machine.bus, 0xFF05) == 3,
+		"Expected TIMA to increment once for each elapsed timer period",
+	)
+}
+
+@(test)
+test_div_continues_while_tima_is_disabled :: proc(t: ^testing.T) {
+	machine := make_test_machine([]u8{0x00})
+	gb.bus_write_byte(&machine.bus, 0xFF07, 0x01)
+
+	gb.machine_tick(&machine, 64)
+
+	testing.expect(
+		t,
+		gb.bus_read_byte(&machine.bus, 0xFF04) == 1,
+		"Expected DIV to continue incrementing while the timer is disabled",
+	)
+	testing.expect(
+		t,
+		gb.bus_read_byte(&machine.bus, 0xFF05) == 0,
+		"Expected disabled TIMA to remain unchanged while DIV increments",
+	)
+}
+
+@(test)
+test_tima_overflow_preserves_unrelated_interrupt_flags :: proc(t: ^testing.T) {
+	machine := make_test_machine([]u8{0x00})
+	gb.bus_write_byte(&machine.bus, 0xFF0F, 0x11)
+	gb.bus_write_byte(&machine.bus, 0xFF05, 0xFF)
+	gb.bus_write_byte(&machine.bus, 0xFF06, 0x42)
+	gb.bus_write_byte(&machine.bus, 0xFF07, 0x05)
+
+	gb.machine_tick(&machine, 4)
+
+	testing.expect(
+		t,
+		gb.bus_read_byte(&machine.bus, 0xFF0F) == 0x15,
+		"Expected timer overflow to set only the Timer interrupt flag",
+	)
+}
+
+@(test)
+test_timer_advances_while_cpu_is_halted :: proc(t: ^testing.T) {
+	machine := make_test_machine([]u8{0x76})
+	gb.bus_write_byte(&machine.bus, 0xFF07, 0x05)
+
+	halt_ok := gb.Machine_step(&machine)
+	wait_one_ok := gb.Machine_step(&machine)
+	wait_two_ok := gb.Machine_step(&machine)
+	wait_three_ok := gb.Machine_step(&machine)
+
+	testing.expect(
+		t,
+		halt_ok && wait_one_ok && wait_two_ok && wait_three_ok,
+		"Expected HALT and halted wait cycles to succeed",
+	)
+	testing.expect(t, machine.cpu.halted, "Expected CPU to remain halted")
+	testing.expect(t, machine.cpu.pc == 0x0101, "Expected halted CPU not to fetch another opcode")
+	testing.expect(
+		t,
+		gb.bus_read_byte(&machine.bus, 0xFF05) == 1,
+		"Expected the timer to advance during four halted M-cycles",
+	)
+}
