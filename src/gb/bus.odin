@@ -71,6 +71,7 @@ PPU :: struct {
 	scx:                 u8,
 	ly:                  u8,
 	lyc:                 u8,
+	// Background palette data
 	bgp:                 u8,
 	obp0:                u8,
 	obp1:                u8,
@@ -78,6 +79,8 @@ PPU :: struct {
 	wx:                  u8,
 	dot:                 int,
 	mode:                PPU_mode,
+	// Representing colors for each pixel
+	frame_buffer:        [160 * 144]u8,
 	stat_interrupt_line: bool,
 }
 

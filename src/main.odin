@@ -5,6 +5,11 @@ import "core:os"
 import "gb"
 
 main :: proc() {
+	if len(os.args) > 1 && os.args[1] == "--display-test" {
+		gb.dump_ppu_test_frame()
+		return
+	}
+
 	file_path := "roms/Pokemon Red.gb"
 	rom, err := os.read_entire_file(file_path, context.allocator)
 	if err != nil {

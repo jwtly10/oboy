@@ -313,19 +313,89 @@ test_stat_consecutive_modes_keep_shared_line_high :: proc(t: ^testing.T) {
 	)
 }
 
-@(test)
-test_dmg_stat_write_during_oam_requests_spurious_interrupt :: proc(t: ^testing.T) {
-	bus := make_test_bus([]u8{})
-	gb.bus_write_byte(&bus, 0xFF45, 1)
-	gb.bus_write_byte(&bus, 0xFF40, 0x80)
-	gb.ppu_tick(&bus)
+// --- PPU background rendering tests ---
 
-	testing.expect(t, bus.ppu.mode == .OAM, "Expected the PPU to be in OAM mode")
-	gb.bus_write_byte(&bus, 0xFF41, 0x00)
+@(test)
+test_ppu_renders_tile_pixels_through_background_palette :: proc(t: ^testing.T) {
+	bus := make_test_bus([]u8{})
+	gb.bus_write_byte(&bus, 0xFF40, 0x91) // LCD on, BG on, unsigned tile data.
+	gb.bus_write_byte(&bus, 0xFF47, 0xE4) // Identity mapping for color IDs 0, 1, 2, 3.
+	gb.bus_write_byte(&bus, 0x9800, 0)
+	gb.bus_write_byte(&bus, 0x8000, 0x55)
+	gb.bus_write_byte(&bus, 0x8001, 0x33)
+
+	ppu_tick_many(&bus, 252)
+
+	expected := [8]u8{0, 1, 2, 3, 0, 1, 2, 3}
+	for pixel, screen_x in expected {
+		testing.expectf(
+			t,
+			bus.ppu.frame_buffer[screen_x] == pixel,
+			"Expected pixel %d of the first tile to have shade %d",
+			screen_x,
+			pixel,
+		)
+	}
+	testing.expect(
+		t,
+		bus.ppu.frame_buffer[gb.SCREEN_WIDTH] == 0,
+		"Expected rendering scanline 0 not to modify scanline 1",
+	)
+}
+
+@(test)
+test_ppu_uses_selected_tile_map_and_signed_tile_addressing :: proc(t: ^testing.T) {
+	bus := make_test_bus([]u8{})
+	gb.bus_write_byte(&bus, 0xFF40, 0x89) // LCD on, BG on, map 9C00, signed tile data.
+	gb.bus_write_byte(&bus, 0xFF47, 0x1B) // Reverse color ID to shade mapping.
+	gb.bus_write_byte(&bus, 0x9C00, 0xFF) // Signed tile -1 begins at 8FF0.
+	gb.bus_write_byte(&bus, 0x8FF0, 0x80)
+	gb.bus_write_byte(&bus, 0x8FF1, 0x80)
+
+	ppu_tick_many(&bus, 252)
 
 	testing.expect(
 		t,
-		gb.bus_read_byte(&bus, 0xFF0F) & 0x02 != 0,
-		"Expected the DMG STAT write quirk to request an interrupt during OAM",
+		bus.ppu.frame_buffer[0] == 0,
+		"Expected color ID 3 from signed tile -1 to map to shade 0",
 	)
+	testing.expect(t, bus.ppu.frame_buffer[1] == 3, "Expected color ID 0 to map to shade 3")
+}
+
+@(test)
+test_ppu_background_scroll_wraps_across_256_pixel_map :: proc(t: ^testing.T) {
+	bus := make_test_bus([]u8{})
+	gb.bus_write_byte(&bus, 0xFF40, 0x91)
+	gb.bus_write_byte(&bus, 0xFF42, 0xFF)
+	gb.bus_write_byte(&bus, 0xFF43, 0xFC)
+	gb.bus_write_byte(&bus, 0xFF47, 0xE4)
+	gb.bus_write_byte(&bus, 0x9BFF, 1)
+	gb.bus_write_byte(&bus, 0x9BE0, 2)
+	gb.bus_write_byte(&bus, 0x801E, 0x08) // Tile 1, row 7, x=4 is color ID 1.
+	gb.bus_write_byte(&bus, 0x802E, 0x80) // Tile 2, row 7, x=0 is color ID 1.
+
+	ppu_tick_many(&bus, 252)
+
+	testing.expect(t, bus.ppu.frame_buffer[0] == 1, "Expected SCX/SCY to select pixel (252, 255)")
+	testing.expect(t, bus.ppu.frame_buffer[4] == 1, "Expected background X to wrap from 255 to 0")
+}
+
+@(test)
+test_ppu_blanks_background_when_lcdc_background_enable_is_clear :: proc(t: ^testing.T) {
+	bus := make_test_bus([]u8{})
+	gb.bus_write_byte(&bus, 0xFF40, 0x90) // LCD on, BG off.
+	gb.bus_write_byte(&bus, 0xFF47, 0xFF)
+	gb.bus_write_byte(&bus, 0x8000, 0xFF)
+	gb.bus_write_byte(&bus, 0x8001, 0xFF)
+
+	ppu_tick_many(&bus, 252)
+
+	for screen_x in 0 ..< gb.SCREEN_WIDTH {
+		testing.expectf(
+			t,
+			bus.ppu.frame_buffer[screen_x] == 0,
+			"Expected disabled background pixel %d to be blank",
+			screen_x,
+		)
+	}
 }

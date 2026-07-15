@@ -73,6 +73,7 @@ machine_tick :: proc(machine: ^Machine, m_cycles: int) {
 	// so when talking to timer we use T Cycles
 	for _ in 0 ..< m_cycles * 4 {
 		timer_tick(&machine.bus)
+		ppu_tick(&machine.bus)
 	}
 }
 
