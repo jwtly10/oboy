@@ -65,19 +65,20 @@ WY_ADDRESS :: u16(0xFF4A)
 WX_ADDRESS :: u16(0xFF4B)
 
 PPU :: struct {
-	lcdc: u8,
-	stat: u8,
-	scy:  u8,
-	scx:  u8,
-	ly:   u8,
-	lyc:  u8,
-	bgp:  u8,
-	obp0: u8,
-	obp1: u8,
-	wy:   u8,
-	wx:   u8,
-	dot:  int,
-	mode: PPU_mode,
+	lcdc:                u8,
+	stat:                u8,
+	scy:                 u8,
+	scx:                 u8,
+	ly:                  u8,
+	lyc:                 u8,
+	bgp:                 u8,
+	obp0:                u8,
+	obp1:                u8,
+	wy:                  u8,
+	wx:                  u8,
+	dot:                 int,
+	mode:                PPU_mode,
+	stat_interrupt_line: bool,
 }
 
 PPU_mode :: enum u8 {
@@ -222,6 +223,7 @@ bus_write_byte :: proc(bus: ^Bus, address: u16, value: u8) {
 	case STAT_ADDRESS:
 		// CPU can only write bits 3..6, 0..2 are controlled by PPU
 		bus.ppu.stat = (bus.ppu.stat & 0b0000_0111) | (value & 0b0111_1000)
+		ppu_update_stat_interrupt_line(bus)
 	case SCY_ADDRESS:
 		bus.ppu.scy = value
 	case SCX_ADDRESS:
@@ -230,6 +232,10 @@ bus_write_byte :: proc(bus: ^Bus, address: u16, value: u8) {
 	// Read-only - noop
 	case LYC_ADDRESS:
 		bus.ppu.lyc = value
+		// If this value changes we have to ensure PPU state
+		// is recalculated for the STAT interrupt
+		ppu_update_lyc_coincidence(bus)
+		ppu_update_stat_interrupt_line(bus)
 	case BGP_ADDRESS:
 		bus.ppu.bgp = value
 	case OBP0_ADDRESS:

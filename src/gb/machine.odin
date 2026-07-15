@@ -5,7 +5,7 @@ import "core:fmt"
 // https://gbdev.io/pandocs/Interrupts.html#ff0f--if-interrupt-flag
 Interrupt :: enum u8 {
 	VBLANK = 0,
-	LCD    = 1,
+	STAT   = 1,
 	TIMER  = 2,
 	SERIAL = 3,
 	JOYPAD = 4,

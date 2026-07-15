@@ -20,25 +20,15 @@ ppu_tick :: proc(bus: ^Bus) {
 		ppu.ly = 0
 		// Sets mode
 		ppu_set_mode(bus, .HBLANK)
+		// Update LYC triggers
+		ppu_update_lyc_coincidence(bus)
+		// We don't trigger interrupt while disabled
+		// we just reset line
+		ppu.stat_interrupt_line = false
 		return
 	}
 
-	// How PPU mode is derived:
-	// - Screen is 144 pixels high so there are 0..143 visible scanlines
-	// - There are 154 scanlines total (10 hidden are VBLANK)
-	// - Each scanline lasts 456 T-Cycles
-	// - OAM scan lasts 80 T-Cycles
-	// - HBLANK fills remainder of the 456 cycle
-	// - Mode 3 (DRAWING) is variable
-	if ppu.ly >= VISIBLE_SCANLINE_END {
-		ppu_set_mode(bus, .VBLANK)
-	} else if ppu.dot < OAM_MODE_END_D {
-		ppu_set_mode(bus, .OAM)
-	} else if ppu.dot < DRAWING_MODE_END_D {
-		ppu_set_mode(bus, .DRAWING)
-	} else {
-		ppu_set_mode(bus, .HBLANK)
-	}
+	ppu_update_mode(bus)
 
 	// The dot essentially represents the horizontal timing within 1 scanline
 	// whereas LY is the vertical scanline position within a frame
@@ -58,6 +48,72 @@ ppu_tick :: proc(bus: ^Bus) {
 		}
 	}
 
+	// Interrupt logic needs the latest mode
+	ppu_update_mode(bus)
+	ppu_update_lyc_coincidence(bus)
+	ppu_update_stat_interrupt_line(bus)
+}
+
+// How PPU mode is derived:
+// - Screen is 144 pixels high so there are 0..143 visible scanlines
+// - There are 154 scanlines total (10 hidden are VBLANK)
+// - Each scanline lasts 456 T-Cycles
+// - OAM scan lasts 80 T-Cycles
+// - HBLANK fills remainder of the 456 cycle
+// - Mode 3 (DRAWING) is variable
+ppu_update_mode :: proc(bus: ^Bus) {
+	ppu := &bus.ppu
+
+	if ppu.ly >= VISIBLE_SCANLINE_END {
+		ppu_set_mode(bus, .VBLANK)
+	} else if ppu.dot < OAM_MODE_END_D {
+		ppu_set_mode(bus, .OAM)
+	} else if ppu.dot < DRAWING_MODE_END_D {
+		ppu_set_mode(bus, .DRAWING)
+	} else {
+		ppu_set_mode(bus, .HBLANK)
+	}
+}
+
+// https://github.com/Ashiepaws/GBEDG/blob/master/ppu/index.md#stat6---lycly-stat-interrupt-enable
+//
+// This interrupt is ONLY triggered on the rising edge of this condition
+// Essentially one of these conditions must be met to trigger a STAT interrupt
+// And it will only happen once, until they all 'reset' again
+ppu_update_stat_interrupt_line :: proc(bus: ^Bus) {
+	ppu := &bus.ppu
+
+	// https://github.com/Ashiepaws/GBEDG/blob/master/ppu/index.md#lcd-status-register-stat--ff41
+	// A number of bits trigger the interrupt behaviour
+	lyc_src := (ppu.stat & (1 << 6)) != 0 && ppu.ly == ppu.lyc
+	oam_src := (ppu.stat & (1 << 5)) != 0 && ppu.mode == .OAM
+	vblank_src := (ppu.stat & (1 << 4)) != 0 && ppu.mode == .VBLANK
+	hblank_src := (ppu.stat & (1 << 3)) != 0 && ppu.mode == .HBLANK
+
+	src_high := lyc_src || hblank_src || vblank_src || oam_src
+
+	// line is not set yet - but a src_high is true -> We can interrupt
+	if !ppu.stat_interrupt_line && src_high {
+		request_interrupt(bus, .STAT)
+	}
+
+	// Set to true, and it won't run again until
+	ppu.stat_interrupt_line = src_high
+}
+
+// https://github.com/Ashiepaws/GBEDG/blob/master/ppu/index.md#lcd-status-register-stat--ff41
+// Bit 2   Coincidence Flag
+//     This bit is set by the PPU if the value of the LY register is equal to that of the LYC register.
+ppu_update_lyc_coincidence :: proc(bus: ^Bus) {
+	ppu := &bus.ppu
+
+	if ppu.ly == ppu.lyc {
+		// Setting bit 2, if not already
+		ppu.stat |= 1 << 2
+	} else {
+		// Clearing bit 2
+		ppu.stat &= ~u8(1 << 2)
+	}
 }
 
 // Sets PPU mode based on STAT register
