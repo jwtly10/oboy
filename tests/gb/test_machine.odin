@@ -691,3 +691,29 @@ test_timer_advances_while_cpu_is_halted :: proc(t: ^testing.T) {
 		"Expected the timer to advance during four halted M-cycles",
 	)
 }
+
+// --- PPU clock integration tests ---
+
+@(test)
+test_machine_tick_advances_ppu_once_per_t_cycle :: proc(t: ^testing.T) {
+	machine := make_test_machine([]u8{0x00})
+	gb.bus_write_byte(&machine.bus, 0xFF40, 0x80)
+
+	gb.machine_tick(&machine, 20)
+
+	testing.expect(
+		t,
+		machine.bus.ppu.dot == 80,
+		"Expected 20 M-cycles to advance the PPU by 80 dots",
+	)
+	testing.expect(
+		t,
+		machine.bus.ppu.mode == .DRAWING,
+		"Expected machine clock to reach drawing mode",
+	)
+	testing.expect(
+		t,
+		machine.bus.ppu.stat & 0b11 == 3,
+		"Expected STAT mode to follow machine time",
+	)
+}

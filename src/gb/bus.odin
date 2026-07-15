@@ -41,16 +41,52 @@ IE_ADDRESS :: u16(0xFFFF)
 INTERRUPT_FLAG_ADDRESS :: u16(0xFF0F)
 
 // Timer Address
+
 DIV_ADDRESS :: u16(0xFF04)
 TIMA_ADDRESS :: u16(0xFF05)
 TMA_ADDRESS :: u16(0xFF06)
 TAC_ADDRESS :: u16(0xFF07)
 
-timer_overflow_cycle :: enum {
-	NONE,
-	CYCLE_A,
-	CYCLE_B,
+// PPU Addresses
+
+// LCD Control
+LCDC_ADDRESS :: u16(0xFF40)
+// LCD Status
+STAT_ADDRESS :: u16(0xFF41)
+SCY_ADDRESS :: u16(0xFF42)
+SCX_ADDRESS :: u16(0xFF43)
+// Stores no. scanlines ppu currently processing
+LY_ADDRESS :: u16(0xFF44)
+LYC_ADDRESS :: u16(0xFF45)
+BGP_ADDRESS :: u16(0xFF47)
+OBP0_ADDRESS :: u16(0xFF48)
+OBP1_ADDRESS :: u16(0xFF49)
+WY_ADDRESS :: u16(0xFF4A)
+WX_ADDRESS :: u16(0xFF4B)
+
+PPU :: struct {
+	lcdc: u8,
+	stat: u8,
+	scy:  u8,
+	scx:  u8,
+	ly:   u8,
+	lyc:  u8,
+	bgp:  u8,
+	obp0: u8,
+	obp1: u8,
+	wy:   u8,
+	wx:   u8,
+	dot:  int,
+	mode: PPU_mode,
 }
+
+PPU_mode :: enum u8 {
+	HBLANK  = 0,
+	VBLANK  = 1,
+	OAM     = 2,
+	DRAWING = 3,
+}
+
 
 Timer_Registers :: struct {
 	system_counter: u16,
@@ -61,7 +97,13 @@ Timer_Registers :: struct {
 	overflow_delay: u8,
 }
 
-// https://gbdev.io/pandocs/Memory_Map.html#memory-map
+timer_overflow_cycle :: enum {
+	NONE,
+	CYCLE_A,
+	CYCLE_B,
+}
+
+// https://gbdev.io/pandocs/Memory_MapiW.html#memory-map
 // Bus handled the memory mapping of the emulator
 Bus :: struct {
 	cartridge:  Cartridge,
@@ -73,6 +115,7 @@ Bus :: struct {
 	// Interrupt Enabled register
 	ie:         u8,
 	timer_regs: Timer_Registers,
+	ppu:        PPU,
 }
 
 Bus_init :: proc(rom: []u8, header: ^ROM_Header, allocator := context.allocator) -> (Bus, bool) {
@@ -117,6 +160,28 @@ bus_read_byte :: proc(bus: ^Bus, address: u16) -> u8 {
 		// the rest are treated as 1
 		// Bitwise OR 1111_1000
 		return bus.timer_regs.tac | 0xF8
+	case LCDC_ADDRESS:
+		return bus.ppu.lcdc
+	case STAT_ADDRESS:
+		return bus.ppu.stat
+	case SCY_ADDRESS:
+		return bus.ppu.scy
+	case SCX_ADDRESS:
+		return bus.ppu.scx
+	case LY_ADDRESS:
+		return bus.ppu.ly
+	case LYC_ADDRESS:
+		return bus.ppu.lyc
+	case BGP_ADDRESS:
+		return bus.ppu.bgp
+	case OBP0_ADDRESS:
+		return bus.ppu.obp0
+	case OBP1_ADDRESS:
+		return bus.ppu.obp1
+	case WY_ADDRESS:
+		return bus.ppu.wy
+	case WX_ADDRESS:
+		return bus.ppu.wx
 	case IO_START ..= IO_END:
 		return bus.io[address - IO_START]
 	case HRAM_START ..= HRAM_END:
@@ -152,6 +217,29 @@ bus_write_byte :: proc(bus: ^Bus, address: u16, value: u8) {
 		timer_write_tma(bus, value)
 	case TAC_ADDRESS:
 		timer_write_tac(bus, value)
+	case LCDC_ADDRESS:
+		bus.ppu.lcdc = value
+	case STAT_ADDRESS:
+		// CPU can only write bits 3..6, 0..2 are controlled by PPU
+		bus.ppu.stat = (bus.ppu.stat & 0b0000_0111) | (value & 0b0111_1000)
+	case SCY_ADDRESS:
+		bus.ppu.scy = value
+	case SCX_ADDRESS:
+		bus.ppu.scx = value
+	case LY_ADDRESS:
+	// Read-only - noop
+	case LYC_ADDRESS:
+		bus.ppu.lyc = value
+	case BGP_ADDRESS:
+		bus.ppu.bgp = value
+	case OBP0_ADDRESS:
+		bus.ppu.obp0 = value
+	case OBP1_ADDRESS:
+		bus.ppu.obp1 = value
+	case WY_ADDRESS:
+		bus.ppu.wy = value
+	case WX_ADDRESS:
+		bus.ppu.wx = value
 	case IO_START ..= IO_END:
 		bus.io[address - IO_START] = value
 	case HRAM_START ..= HRAM_END:

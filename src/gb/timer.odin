@@ -118,7 +118,7 @@ timer_overflow_check :: proc(bus: ^Bus) {
 			regs.overflow_delay = 4
 
 			regs.tima = regs.tma
-			interrupt_request(bus, .TIMER)
+			request_interrupt(bus, .TIMER)
 		}
 	case .CYCLE_B:
 		// The reload signal remains active for the whole M-cycle.

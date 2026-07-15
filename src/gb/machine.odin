@@ -87,7 +87,7 @@ interrupt_pending :: proc(bus: ^Bus) -> u8 {
 	return iflags & bus.ie & 0x1F
 }
 
-interrupt_request :: proc(bus: ^Bus, interrupt: Interrupt) {
+request_interrupt :: proc(bus: ^Bus, interrupt: Interrupt) {
 	iflags := bus_read_byte(bus, INTERRUPT_FLAG_ADDRESS)
 	iflags |= u8(1 << u8(interrupt))
 	bus_write_byte(bus, INTERRUPT_FLAG_ADDRESS, iflags)
