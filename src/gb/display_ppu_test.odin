@@ -5,13 +5,34 @@ import "core:os"
 
 dump_ppu_test_frame :: proc() {
 	bus := Bus{}
-	bus_write_byte(&bus, LCDC_ADDRESS, 0x91)
+	bus_write_byte(&bus, LCDC_ADDRESS, 0xF1) // LCD, BG, and Window on; Window uses 9C00.
 	bus_write_byte(&bus, BGP_ADDRESS, 0xE4)
+	bus_write_byte(&bus, WY_ADDRESS, 24)
+	bus_write_byte(&bus, WX_ADDRESS, 39) // Window begins at screen x=32.
 
 	for tile_y in 0 ..< 32 {
 		for tile_x in 0 ..< 32 {
-			tile_number := u8((tile_x + tile_y) % 4)
+			tile_number := u8(1 + (tile_x + tile_y) % 2)
 			bus_write_byte(&bus, 0x9800 + u16(tile_y * 32 + tile_x), tile_number)
+		}
+	}
+
+	window_width_tiles := (SCREEN_WIDTH - 32) / 8
+	window_height_tiles := (SCREEN_HEIGHT - 24) / 8
+	for tile_y in 0 ..< 32 {
+		for tile_x in 0 ..< 32 {
+			tile_number: u8
+			if tile_x == 0 ||
+			   tile_x == window_width_tiles - 1 ||
+			   tile_y == 0 ||
+			   tile_y == window_height_tiles - 1 {
+				tile_number = 3
+			} else if tile_y == 2 {
+				tile_number = 2
+			} else {
+				tile_number = 0
+			}
+			bus_write_byte(&bus, 0x9C00 + u16(tile_y * 32 + tile_x), tile_number)
 		}
 	}
 

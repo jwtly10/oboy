@@ -399,3 +399,135 @@ test_ppu_blanks_background_when_lcdc_background_enable_is_clear :: proc(t: ^test
 		)
 	}
 }
+
+// --- PPU window rendering tests ---
+
+ppu_write_solid_test_tile :: proc(bus: ^gb.Bus, tile_number, colour_number: u8) {
+	low_byte := u8(0xFF if colour_number & 1 != 0 else 0)
+	high_byte := u8(0xFF if colour_number & 2 != 0 else 0)
+	tile_address := u16(0x8000) + u16(tile_number) * 16
+	for row in 0 ..< 8 {
+		row_address := tile_address + u16(row * 2)
+		gb.bus_write_byte(bus, row_address, low_byte)
+		gb.bus_write_byte(bus, row_address + 1, high_byte)
+	}
+}
+
+@(test)
+test_ppu_window_overlays_background_from_wx_and_wy :: proc(t: ^testing.T) {
+	bus := make_test_bus([]u8{})
+	gb.bus_write_byte(&bus, 0xFF40, 0xF1) // LCD, BG, and Window on; Window uses 9C00.
+	gb.bus_write_byte(&bus, 0xFF47, 0xE4)
+	gb.bus_write_byte(&bus, 0xFF4A, 4)
+	gb.bus_write_byte(&bus, 0xFF4B, 15) // Window begins at screen x=8.
+	gb.bus_write_byte(&bus, 0x9800, 1)
+	gb.bus_write_byte(&bus, 0x9801, 1)
+	gb.bus_write_byte(&bus, 0x9C00, 2)
+	ppu_write_solid_test_tile(&bus, 1, 1)
+	ppu_write_solid_test_tile(&bus, 2, 2)
+
+	ppu_tick_many(&bus, 4 * 456 + 252)
+
+	previous_line := 3 * gb.SCREEN_WIDTH
+	window_line := 4 * gb.SCREEN_WIDTH
+	testing.expect(
+		t,
+		bus.ppu.frame_buffer[previous_line + 8] == 1,
+		"Expected the background above WY to remain visible",
+	)
+	testing.expect(
+		t,
+		bus.ppu.frame_buffer[window_line + 7] == 1,
+		"Expected the background immediately left of WX-7 to remain visible",
+	)
+	testing.expect(
+		t,
+		bus.ppu.frame_buffer[window_line + 8] == 2,
+		"Expected the Window to begin at screen coordinate (WX-7, WY)",
+	)
+}
+
+@(test)
+test_ppu_window_starts_at_tile_row_zero_when_ly_reaches_wy :: proc(t: ^testing.T) {
+	bus := make_test_bus([]u8{})
+	gb.bus_write_byte(&bus, 0xFF40, 0xF1)
+	gb.bus_write_byte(&bus, 0xFF47, 0xE4)
+	gb.bus_write_byte(&bus, 0xFF4A, 9)
+	gb.bus_write_byte(&bus, 0xFF4B, 7)
+	gb.bus_write_byte(&bus, 0x9C00, 3)
+	gb.bus_write_byte(&bus, 0x8030, 0xFF) // Tile 3 row 0 is color ID 1.
+	gb.bus_write_byte(&bus, 0x8032, 0x00)
+	gb.bus_write_byte(&bus, 0x8033, 0xFF) // Tile 3 row 1 is color ID 2.
+
+	ppu_tick_many(&bus, 9 * 456 + 252)
+
+	testing.expect(
+		t,
+		bus.ppu.frame_buffer[9 * gb.SCREEN_WIDTH] == 1,
+		"Expected the first visible Window scanline to use tile row 0",
+	)
+
+	ppu_tick_many(&bus, 456)
+
+	testing.expect(
+		t,
+		bus.ppu.frame_buffer[10 * gb.SCREEN_WIDTH] == 2,
+		"Expected the next Window scanline to use tile row 1",
+	)
+}
+
+@(test)
+test_ppu_window_uses_its_selected_map_and_ignores_background_scroll :: proc(t: ^testing.T) {
+	bus := make_test_bus([]u8{})
+	gb.bus_write_byte(&bus, 0xFF40, 0xF1) // BG uses 9800; Window uses 9C00.
+	gb.bus_write_byte(&bus, 0xFF47, 0xE4)
+	gb.bus_write_byte(&bus, 0xFF42, 8)
+	gb.bus_write_byte(&bus, 0xFF43, 8)
+	gb.bus_write_byte(&bus, 0xFF4A, 0)
+	gb.bus_write_byte(&bus, 0xFF4B, 7)
+	gb.bus_write_byte(&bus, 0x9C00, 1)
+	gb.bus_write_byte(&bus, 0x9821, 2) // Background pixel (8, 8) uses this entry.
+	ppu_write_solid_test_tile(&bus, 1, 1)
+	ppu_write_solid_test_tile(&bus, 2, 2)
+
+	ppu_tick_many(&bus, 252)
+
+	testing.expect(
+		t,
+		bus.ppu.frame_buffer[0] == 1,
+		"Expected Window pixel (0, 0) not to use the scrolled Background coordinate",
+	)
+}
+
+@(test)
+test_ppu_window_enable_and_offscreen_wx :: proc(t: ^testing.T) {
+	disabled_bus := make_test_bus([]u8{})
+	gb.bus_write_byte(&disabled_bus, 0xFF40, 0xD1) // Window map selected but Window disabled.
+	gb.bus_write_byte(&disabled_bus, 0xFF47, 0xE4)
+	gb.bus_write_byte(&disabled_bus, 0xFF4B, 7)
+	gb.bus_write_byte(&disabled_bus, 0x9800, 1)
+	gb.bus_write_byte(&disabled_bus, 0x9C00, 2)
+	ppu_write_solid_test_tile(&disabled_bus, 1, 1)
+	ppu_write_solid_test_tile(&disabled_bus, 2, 2)
+	ppu_tick_many(&disabled_bus, 252)
+	testing.expect(
+		t,
+		disabled_bus.ppu.frame_buffer[0] == 1,
+		"Expected a disabled Window to leave the Background visible",
+	)
+
+	offscreen_bus := make_test_bus([]u8{})
+	gb.bus_write_byte(&offscreen_bus, 0xFF40, 0xB9) // BG uses 9C00; Window uses 9800.
+	gb.bus_write_byte(&offscreen_bus, 0xFF47, 0xE4)
+	gb.bus_write_byte(&offscreen_bus, 0xFF4B, 167)
+	gb.bus_write_byte(&offscreen_bus, 0x9800, 1)
+	gb.bus_write_byte(&offscreen_bus, 0x9C13, 2)
+	ppu_write_solid_test_tile(&offscreen_bus, 1, 1)
+	ppu_write_solid_test_tile(&offscreen_bus, 2, 2)
+	ppu_tick_many(&offscreen_bus, 252)
+	testing.expect(
+		t,
+		offscreen_bus.ppu.frame_buffer[159] == 2,
+		"Expected WX=167 to keep the Window beyond the right edge",
+	)
+}
