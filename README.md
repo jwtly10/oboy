@@ -2,9 +2,9 @@
 
 # oboy
 
-`oboy` is a WIP Game Boy emulator written in Odin.
+`oboy` is a WIP Odin Game Boy emulator.
 
-It can currently boot and run Pokémon Red, but hasn't been extensively tested.
+Can currently boot and run Pokémon Red.
 
 https://github.com/user-attachments/assets/3e2b281f-57cd-4657-bd0b-4e086385cc35
 

@@ -29,7 +29,8 @@ OAM_END :: u16(0xFE9F)
 UNUSABLE_START :: u16(0xFEA0)
 UNUSABLE_END :: u16(0xFEFF)
 
-IO_START :: u16(0xFF00)
+JOYP_ADDRESS :: u16(0xFF00)
+IO_START :: JOYP_ADDRESS
 IO_END :: u16(0xFF7F)
 
 HRAM_START :: u16(0xFF80)
@@ -122,6 +123,7 @@ Bus :: struct {
 	timer_regs: Timer_Registers,
 	ppu:        PPU,
 	dma:        DMA,
+	joypad:     joypad,
 }
 
 Bus_init :: proc(rom: []u8, header: ^ROM_Header, allocator := context.allocator) -> (Bus, bool) {
@@ -220,7 +222,10 @@ bus_read_byte_internal :: proc(bus: ^Bus, address: u16) -> u8 {
 		return bus.ppu.wx
 	case DMA_ADDRESS:
 		return bus.dma.reg
-	case IO_START ..= IO_END:
+	case JOYP_ADDRESS:
+		return joypad_read(bus)
+	case IO_START + 1 ..= IO_END:
+		// JOYP is the IO start
 		return bus.io[address - IO_START]
 	case HRAM_START ..= HRAM_END:
 		return bus.hram[address - HRAM_START]
@@ -285,7 +290,9 @@ bus_write_byte_internal :: proc(bus: ^Bus, address: u16, value: u8) {
 		bus.ppu.wx = value
 	case DMA_ADDRESS:
 		dma_write(bus, value)
-	case IO_START ..= IO_END:
+	case JOYP_ADDRESS:
+		joypad_write(bus, value)
+	case IO_START + 1 ..= IO_END:
 		bus.io[address - IO_START] = value
 	case HRAM_START ..= HRAM_END:
 		bus.hram[address - HRAM_START] = value

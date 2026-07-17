@@ -8,12 +8,13 @@ import rl "vendor:raylib"
 SCREEN_SCALE :: 4
 
 main :: proc() {
-	if len(os.args) > 1 && os.args[1] == "--display-test" {
-		gb.dump_ppu_test_frame()
+	if len(os.args) < 2 {
+		fmt.println("Usage: oboy <path-to-rom>")
 		return
 	}
 
-	file_path := "roms/Pokemon Red.gb"
+	file_path := os.args[1]
+
 	rom, err := os.read_entire_file(file_path, context.allocator)
 	if err != nil {
 		fmt.println("Could not read file, aborting")
@@ -50,6 +51,18 @@ main :: proc() {
 	display_pixels: [gb.SCREEN_WIDTH * gb.SCREEN_HEIGHT]rl.Color
 
 	for !rl.WindowShouldClose() {
+
+		// Keyboard inputs
+		gb.joypad_set_button(&machine.bus, .RIGHT, rl.IsKeyDown(.D))
+		gb.joypad_set_button(&machine.bus, .LEFT, rl.IsKeyDown(.A))
+		gb.joypad_set_button(&machine.bus, .UP, rl.IsKeyDown(.W))
+		gb.joypad_set_button(&machine.bus, .DOWN, rl.IsKeyDown(.S))
+
+		gb.joypad_set_button(&machine.bus, .A, rl.IsKeyDown(.J))
+		gb.joypad_set_button(&machine.bus, .B, rl.IsKeyDown(.K))
+		gb.joypad_set_button(&machine.bus, .SELECT, rl.IsKeyDown(.BACKSPACE))
+		gb.joypad_set_button(&machine.bus, .START, rl.IsKeyDown(.ENTER))
+
 		if !gb.Machine_run_frame(&machine) {
 			break
 		}

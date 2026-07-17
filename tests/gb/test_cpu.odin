@@ -2388,6 +2388,13 @@ test_ldh_c_accumulator_loads_cover_high_memory_boundaries :: proc(t: ^testing.T)
 	offsets := [2]u8{0x00, 0xFF}
 	for offset in offsets {
 		address := 0xFF00 + u16(offset)
+		expected_store_value := u8(0xA5)
+		expected_load_value := u8(0x5A)
+		if offset == 0 {
+			// JOYP retains bits 4-5; released input lines read high
+			expected_store_value = 0xEF
+			expected_load_value = 0xDF
+		}
 
 		store_bus := make_test_bus([]u8{0xE2})
 		store_cpu := make_test_cpu()
@@ -2399,7 +2406,7 @@ test_ldh_c_accumulator_loads_cover_high_memory_boundaries :: proc(t: ^testing.T)
 		testing.expect(t, store_ok, "Expected LDH [C], A to succeed")
 		testing.expect(
 			t,
-			gb.bus_read_byte(&store_bus, address) == 0xA5,
+			gb.bus_read_byte(&store_bus, address) == expected_store_value,
 			"Expected LDH [C], A to write to FF00+C",
 		)
 		testing.expect(
@@ -2420,7 +2427,11 @@ test_ldh_c_accumulator_loads_cover_high_memory_boundaries :: proc(t: ^testing.T)
 		load_cycles, load_ok := gb.Cpu_step(&load_cpu, &load_bus)
 
 		testing.expect(t, load_ok, "Expected LDH A, [C] to succeed")
-		testing.expect(t, load_cpu.a == 0x5A, "Expected LDH A, [C] to read from FF00+C")
+		testing.expect(
+			t,
+			load_cpu.a == expected_load_value,
+			"Expected LDH A, [C] to read from FF00+C",
+		)
 		testing.expect(t, load_cpu.c == offset, "Expected LDH A, [C] to preserve C")
 		testing.expect(t, load_cpu.f == 0xB0, "Expected LDH A, [C] to preserve flags")
 		testing.expect(t, load_cpu.pc == 0x0101, "Expected LDH A, [C] to advance PC by 1")
@@ -2433,6 +2444,13 @@ test_ldh_imm8_accumulator_loads_cover_high_memory_boundaries :: proc(t: ^testing
 	offsets := [2]u8{0x00, 0xFF}
 	for offset in offsets {
 		address := 0xFF00 + u16(offset)
+		expected_store_value := u8(0xA5)
+		expected_load_value := u8(0x5A)
+		if offset == 0 {
+			// JOYP retains bits 4-5; released input lines read high
+			expected_store_value = 0xEF
+			expected_load_value = 0xDF
+		}
 
 		store_bus := make_test_bus([]u8{0xE0, offset})
 		store_cpu := make_test_cpu()
@@ -2443,7 +2461,7 @@ test_ldh_imm8_accumulator_loads_cover_high_memory_boundaries :: proc(t: ^testing
 		testing.expect(t, store_ok, "Expected LDH [imm8], A to succeed")
 		testing.expect(
 			t,
-			gb.bus_read_byte(&store_bus, address) == 0xA5,
+			gb.bus_read_byte(&store_bus, address) == expected_store_value,
 			"Expected LDH [imm8], A to write to FF00+imm8",
 		)
 		testing.expect(
@@ -2461,7 +2479,11 @@ test_ldh_imm8_accumulator_loads_cover_high_memory_boundaries :: proc(t: ^testing
 		load_cycles, load_ok := gb.Cpu_step(&load_cpu, &load_bus)
 
 		testing.expect(t, load_ok, "Expected LDH A, [imm8] to succeed")
-		testing.expect(t, load_cpu.a == 0x5A, "Expected LDH A, [imm8] to read from FF00+imm8")
+		testing.expect(
+			t,
+			load_cpu.a == expected_load_value,
+			"Expected LDH A, [imm8] to read from FF00+imm8",
+		)
 		testing.expect(t, load_cpu.f == 0xB0, "Expected LDH A, [imm8] to preserve flags")
 		testing.expect(t, load_cpu.pc == 0x0102, "Expected LDH A, [imm8] to advance PC by 2")
 		testing.expect(t, load_cycles == 3, "Expected LDH A, [imm8] to take 3 cycles")

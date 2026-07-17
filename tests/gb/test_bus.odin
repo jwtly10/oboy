@@ -54,7 +54,7 @@ test_bus_read_write_regions_cover_boundaries :: proc(t: ^testing.T) {
 		0xDFFF,
 		0xFE00,
 		0xFE9F,
-		0xFF00,
+		0xFF01,
 		0xFF7F,
 		0xFF80,
 		0xFFFE,
@@ -69,6 +69,13 @@ test_bus_read_write_regions_cover_boundaries :: proc(t: ^testing.T) {
 			"Expected mapped memory boundary to retain its byte",
 		)
 	}
+
+	gb.bus_write_byte(&bus, 0xFF00, 0x20)
+	testing.expect(
+		t,
+		gb.bus_read_byte(&bus, 0xFF00) == 0xEF,
+		"Expected JOYP to expose writable selection bits and released buttons",
+	)
 
 	gb.bus_write_byte(&bus, 0xFFFF, 0xA5)
 	testing.expect(

@@ -1,10 +1,10 @@
-.PHONY: run test display-test
+.PHONY: run test build
 
 run:
-	odin run src
+	odin run src -- "roms/Pokemon Red.gb"
+
+build:
+	odin build src -o:speed -out:oboy
 
 test:
-	odin test tests/  -vet -all-packages
-
-display-test:
-	odin run src -- --display-test
+	odin test tests/ -vet -all-packages

@@ -1,6 +1,8 @@
 # Internal 
 /docs
 /roms
+# Binary output
+oboy 
 
 # User-specific files
 *.suo
