@@ -82,6 +82,8 @@ PPU :: struct {
 	// Representing colors for each pixel
 	frame_buffer:        [160 * 144]u8,
 	stat_interrupt_line: bool,
+	// Flag for triggering drawing
+	frame_ready:         bool,
 }
 
 PPU_mode :: enum u8 {

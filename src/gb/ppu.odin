@@ -51,6 +51,7 @@ ppu_tick :: proc(bus: ^Bus) {
 		// https://gbdev.io/pandocs/Interrupt_Sources.html#int-40--vblank-interrupt
 		if ppu.ly == VISIBLE_SCANLINE_END {
 			request_interrupt(bus, .VBLANK)
+			ppu.frame_ready = true
 		}
 
 		if ppu.ly == TOTAL_SCANLINES {

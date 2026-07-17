@@ -37,6 +37,24 @@ Machine_destroy :: proc(machine: ^Machine, alloc := context.allocator) {
 	Bus_destroy(&machine.bus, alloc)
 }
 
+// Entry point to running the emulator
+// The PPU tells the machine when it's ready
+// the UI frontend for the emulator should wait for return true
+// before rendering any of the framebuffer
+Machine_run_frame :: proc(machine: ^Machine) -> bool {
+	machine.bus.ppu.frame_ready = false
+
+	for !machine.bus.ppu.frame_ready {
+		ok := Machine_step(machine)
+		if !ok {
+			return false
+		}
+	}
+
+	return true
+}
+
+// todo: rename lowercaes
 Machine_step :: proc(machine: ^Machine) -> bool {
 	cpu := &machine.cpu
 	bus := &machine.bus
