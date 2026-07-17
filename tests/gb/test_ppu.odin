@@ -391,11 +391,13 @@ test_ppu_blanks_background_when_lcdc_background_enable_is_clear :: proc(t: ^test
 	ppu_tick_many(&bus, 252)
 
 	for screen_x in 0 ..< gb.SCREEN_WIDTH {
+		actual := bus.ppu.frame_buffer[screen_x]
 		testing.expectf(
 			t,
-			bus.ppu.frame_buffer[screen_x] == 0,
-			"Expected disabled background pixel %d to be blank",
+			actual == 0,
+			"Expected disabled background pixel %d to be blank, got: %v",
 			screen_x,
+			actual,
 		)
 	}
 }

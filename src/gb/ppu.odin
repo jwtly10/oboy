@@ -7,7 +7,9 @@ TOTAL_SCANLINES :: 154
 END_OF_SCANLINE_D :: 456
 
 OAM_MODE_END_D :: 80
-DRAWING_MODE_END_D :: 252 // TODO: this is actually variable https://github.com/Ashiepaws/GBEDG/blob/master/ppu/index.md#the-concept-of-ppu-modes
+// TODO: Drawing mode is variable
+// https://github.com/Ashiepaws/GBEDG/blob/master/ppu/index.md#the-concept-of-ppu-modes
+DRAWING_MODE_END_D :: 252
 
 SCREEN_WIDTH :: 160
 SCREEN_HEIGHT :: 144
@@ -70,82 +72,92 @@ ppu_render_scanline :: proc(bus: ^Bus) {
 	ppu := &bus.ppu
 	line_start := int(ppu.ly) * SCREEN_WIDTH
 
-	if ppu.lcdc & 1 == 0 {
-		for screen_x in 0 ..< SCREEN_WIDTH {
-			ppu.frame_buffer[line_start + screen_x] = 0
-		}
-		return
-	}
 
 	for screen_x in 0 ..< SCREEN_WIDTH {
+		// We default to 'empty' pixels
+		bg_color := u8(0)
+		final_shade := u8(0)
 
-		// https://github.com/Ashiepaws/GBEDG/blob/master/ppu/index.md#the-wx-and-wy-registers
-		// 7 is a bit of a magic number... setting 7 is left hand edge
-		window_x := int(ppu.wx) - 7
-
-		// We use the window when 3 conditions are met:
-		// 1. Bit 5 is set (enables window rendering)
-		// 2. Current screen row has reached window top edge
-		// 3. Current screen pixel has reached windows left edge
-		use_window :=
-			ppu.lcdc & (1 << 5) != 0 && int(ppu.ly) >= int(ppu.wy) && screen_x >= window_x
-
-		pixel_x: u8
-		pixel_y: u8
-		map_location: u16
-
-		if use_window {
-			// See background condition explantion
-			// Window is essentially the same rendering process, it's just
-			// reference different areas of memory
-			pixel_x = u8(screen_x - window_x) // Raw left edge
-			pixel_y = ppu.ly - ppu.wy // Raw top
-
-			// See https://github.com/Ashiepaws/GBEDG/blob/master/ppu/index.md#lcd-control-register-lcdc--ff40
-			// This bit picks which tile map to use
-			if ppu.lcdc & (1 << 6) != 0 {
-				map_location = TILE_MAP_2
-			} else {
-				map_location = TILE_MAP_1
-			}
-		} else {
-			// SCX and SCY hold values which show how many pixels the viewport
-			// is off from the left & top
-			//
-			// Since the background is 256x256 (can be represented by u8) and the
-			// viewport is a slice of this background for any given  position (screen_x, ppu.ly)
-			// we need to know what that background pixel is
-			//
-			// Backgrounds are made up of various 8x8 tiles, so given some background_x/y value
-			// we need to divide by 8, to figure out which tile this background value sits
-			// inside, and eventually resolve the specific pixel data.
-			//
-			// https://gbdev.io/pandocs/LCDC.html?highlight=LCDC#ff40--lcdc-lcd-control
-			// Once we have that, we now know (based on LCDC bit 3) which tile map to use (we have 2)
-			// which contains tile numbers. LCDC bit 4 tells us how to use said tile number to find
-			// the actual pixel data
-
-			// u16 > u8 to safely overflow
-			pixel_x = u8(u16(ppu.scx) + u16(screen_x))
-			pixel_y = u8(u16(ppu.scy) + u16(ppu.ly))
-
-			// Bit 3 picks which tile map to use when rendering background
-			if (ppu.lcdc & (1 << 3) != 0) {
-				// Bit is 1
-				map_location = TILE_MAP_2
-			} else {
-				map_location = TILE_MAP_1
-			}
+		// bg/win enabled flag
+		if ppu.lcdc & 1 != 0 {
+			bg_color = resolve_bg_win_color(bus, screen_x)
+			// Sprites will write on top of this
+			// Mapping the bg color to ppu shade
+			final_shade = (ppu.bgp >> (bg_color * 2)) & 0b11
 		}
 
-		shade := ppu_resolve_pixel(bus, map_location, pixel_x, pixel_y)
-		// Set this pixel position the GB shade
-		ppu.frame_buffer[int(ppu.ly) * SCREEN_WIDTH + screen_x] = shade
+		// Setting the scanlines pixel the final shade
+		ppu.frame_buffer[line_start + screen_x] = final_shade
 	}
 }
 
+resolve_bg_win_color :: proc(bus: ^Bus, screen_x: int) -> u8 {
+	ppu := &bus.ppu
+	// https://github.com/Ashiepaws/GBEDG/blob/master/ppu/index.md#the-wx-and-wy-registers
+	// 7 is a bit of a magic number... setting 7 is left hand edge
+	window_x := int(ppu.wx) - 7
+
+	// We use the window when 3 conditions are met:
+	// 1. Bit 5 is set (enables window rendering)
+	// 2. Current screen row has reached window top edge
+	// 3. Current screen pixel has reached windows left edge
+	use_window := ppu.lcdc & (1 << 5) != 0 && int(ppu.ly) >= int(ppu.wy) && screen_x >= window_x
+
+	pixel_x: u8
+	pixel_y: u8
+	map_location: u16
+
+	if use_window {
+		// See background condition explantion
+		// Window is essentially the same rendering process, it's just
+		// reference different areas of memory
+		pixel_x = u8(screen_x - window_x) // Raw left edge
+		pixel_y = ppu.ly - ppu.wy // Raw top
+
+		// See https://github.com/Ashiepaws/GBEDG/blob/master/ppu/index.md#lcd-control-register-lcdc--ff40
+		// This bit picks which tile map to use
+		if ppu.lcdc & (1 << 6) != 0 {
+			map_location = TILE_MAP_2
+		} else {
+			map_location = TILE_MAP_1
+		}
+	} else {
+		// SCX and SCY hold values which show how many pixels the viewport
+		// is off from the left & top
+		//
+		// Since the background is 256x256 (can be represented by u8) and the
+		// viewport is a slice of this background for any given  position (screen_x, ppu.ly)
+		// we need to know what that background pixel is
+		//
+		// Backgrounds are made up of various 8x8 tiles, so given some background_x/y value
+		// we need to divide by 8, to figure out which tile this background value sits
+		// inside, and eventually resolve the specific pixel data.
+		//
+		// https://gbdev.io/pandocs/LCDC.html?highlight=LCDC#ff40--lcdc-lcd-control
+		// Once we have that, we now know (based on LCDC bit 3) which tile map to use (we have 2)
+		// which contains tile numbers. LCDC bit 4 tells us how to use said tile number to find
+		// the actual pixel data
+
+		// u16 > u8 to safely overflow
+		pixel_x = u8(u16(ppu.scx) + u16(screen_x))
+		pixel_y = u8(u16(ppu.scy) + u16(ppu.ly))
+
+		// Bit 3 picks which tile map to use when rendering background
+		if (ppu.lcdc & (1 << 3) != 0) {
+			// Bit is 1
+			map_location = TILE_MAP_2
+		} else {
+			map_location = TILE_MAP_1
+		}
+	}
+
+	bg_color := ppu_resolve_color(bus, map_location, pixel_x, pixel_y)
+
+	return bg_color
+}
+
 // Given bus, map location and pixel coords, resolve the color of the given pixel
-ppu_resolve_pixel :: proc(bus: ^Bus, map_location: u16, pixel_x: u8, pixel_y: u8) -> u8 {
+ppu_resolve_color :: proc(bus: ^Bus, map_location: u16, pixel_x: u8, pixel_y: u8) -> u8 {
 	ppu := &bus.ppu
 	tile_x := u16(pixel_x / 8)
 	tile_y := u16(pixel_y / 8)
@@ -181,12 +193,8 @@ ppu_resolve_pixel :: proc(bus: ^Bus, map_location: u16, pixel_x: u8, pixel_y: u8
 	low_bit := (low_byte >> bit_index) & 1
 	high_bit := (high_byte >> bit_index) & 1
 
-	// 0, 1, 2 or 3
-	colour_number := (high_bit << 1) | low_bit
-
-	// Mapping color to a displayed shade
-	shade := (ppu.bgp >> (colour_number * 2)) & 0b11
-	return shade
+	// 0, 1, 2 or 3 of the pixel bg (or window)
+	return (high_bit << 1) | low_bit
 }
 
 // How PPU mode is derived:
