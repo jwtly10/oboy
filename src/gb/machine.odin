@@ -64,7 +64,9 @@ Machine_step :: proc(machine: ^Machine) -> bool {
 	// FIXME: Hardware is currently advanced only after the entire
 	// instruction has executed. To properly emulate timer need
 	// to perform read/writes at specific M-Cycles
+	// Also affects DMA implementation
 	machine_tick(machine, cycles)
+
 	return true
 }
 
@@ -74,6 +76,7 @@ machine_tick :: proc(machine: ^Machine, m_cycles: int) {
 	for _ in 0 ..< m_cycles * 4 {
 		timer_tick(&machine.bus)
 		ppu_tick(&machine.bus)
+		dma_tick(&machine.bus)
 	}
 }
 
@@ -145,9 +148,8 @@ cpu_service_interrupt :: proc(cpu: ^Cpu, bus: ^Bus, pending: u8) {
 		cpu.halt_bug = false
 	}
 
-	// 2 8 bit decrements to handle 16 bit pc
-	cpu.sp -= 2
-	bus_write_u16(bus, cpu.sp, return_address)
+	// cpu_push_u16 handle cpu.sp updates
+	cpu_push_u16(cpu, bus, return_address)
 
 	cpu.pc = vector
 }

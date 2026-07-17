@@ -229,7 +229,7 @@ Cpu_step :: proc(cpu: ^Cpu, bus: ^Bus) -> (cycles: int, ok: bool) {
 	case 0x08:
 		// ld [imm16], sp
 		address := cpu_fetch_u16(cpu, bus)
-		bus_write_u16(bus, address, cpu.sp)
+		cpu_bus_write_u16(bus, address, cpu.sp)
 		cycles = 5
 		ok = true
 	case 0x09, 0x19, 0x29, 0x39:
@@ -414,7 +414,7 @@ Cpu_step :: proc(cpu: ^Cpu, bus: ^Bus) -> (cycles: int, ok: bool) {
 		ok = true
 	case 0xE2:
 		// ldh [c], a
-		bus_write_byte(bus, 0xFF00 + u16(cpu.c), cpu.a)
+		cpu_bus_write_byte(bus, 0xFF00 + u16(cpu.c), cpu.a)
 		cycles = 2
 		ok = true
 	case 0xE0:
@@ -423,30 +423,30 @@ Cpu_step :: proc(cpu: ^Cpu, bus: ^Bus) -> (cycles: int, ok: bool) {
 		// address should be in range 0xFF00-0xFFFF
 		// but we only get lower 8 bit, so 0xFF00 is implied higher byte
 		address := 0xFF00 + u16(cpu_fetch_u8(cpu, bus))
-		bus_write_byte(bus, address, cpu.a)
+		cpu_bus_write_byte(bus, address, cpu.a)
 		cycles = 3
 		ok = true
 	case 0xEA:
 		// ld [imm16], a
 		address := cpu_fetch_u16(cpu, bus)
-		bus_write_byte(bus, address, cpu.a)
+		cpu_bus_write_byte(bus, address, cpu.a)
 		cycles = 4
 		ok = true
 	case 0xF2:
 		// ldh a, [c]
-		cpu.a = bus_read_byte(bus, 0xFF00 + u16(cpu.c))
+		cpu.a = cpu_bus_read_byte(bus, 0xFF00 + u16(cpu.c))
 		cycles = 2
 		ok = true
 	case 0xF0:
 		// ldh a, [imm8]
 		address := 0xFF00 + u16(cpu_fetch_u8(cpu, bus))
-		cpu.a = bus_read_byte(bus, address)
+		cpu.a = cpu_bus_read_byte(bus, address)
 		cycles = 3
 		ok = true
 	case 0xFA:
 		// ld a, [imm16]
 		address := cpu_fetch_u16(cpu, bus)
-		cpu.a = bus_read_byte(bus, address)
+		cpu.a = cpu_bus_read_byte(bus, address)
 		cycles = 4
 		ok = true
 	case 0xE8:
@@ -650,14 +650,14 @@ cpu_ccf :: proc(cpu: ^Cpu) {
 }
 
 cpu_fetch_u8 :: proc(cpu: ^Cpu, bus: ^Bus) -> u8 {
-	value := bus_read_byte(bus, cpu.pc)
+	value := cpu_bus_read_byte(bus, cpu.pc)
 	cpu.pc += 1
 	return value
 }
 
 // handling HALT behaviour in https://gbdev.io/pandocs/halt.html#halt-bug
 cpu_fetch_opcode :: proc(cpu: ^Cpu, bus: ^Bus) -> u8 {
-	value := bus_read_byte(bus, cpu.pc)
+	value := cpu_bus_read_byte(bus, cpu.pc)
 	if cpu.halt_bug {
 		cpu.halt_bug = false
 	} else {
@@ -687,7 +687,7 @@ cpu_read_r8 :: proc(cpu: ^Cpu, bus: ^Bus, dest: R8) -> u8 {
 	case .L:
 		return cpu.l
 	case .HL_INDIRECT:
-		return bus_read_byte(bus, cpu_get_hl(cpu))
+		return cpu_bus_read_byte(bus, cpu_get_hl(cpu))
 	case .A:
 		return cpu.a
 	}
@@ -710,7 +710,7 @@ cpu_write_r8 :: proc(cpu: ^Cpu, bus: ^Bus, dest: R8, value: u8) {
 	case .L:
 		cpu.l = value
 	case .HL_INDIRECT:
-		bus_write_byte(bus, cpu_get_hl(cpu), value)
+		cpu_bus_write_byte(bus, cpu_get_hl(cpu), value)
 	case .A:
 		cpu.a = value
 	}
@@ -885,16 +885,16 @@ cpu_set_r16stk :: proc(cpu: ^Cpu, dest: R16_stk, value: u16) {
 cpu_ld_r16mem_a :: proc(cpu: ^Cpu, bus: ^Bus, dest: R16_mem) {
 	switch dest {
 	case .BC:
-		bus_write_byte(bus, cpu_get_bc(cpu), cpu.a)
+		cpu_bus_write_byte(bus, cpu_get_bc(cpu), cpu.a)
 	case .DE:
-		bus_write_byte(bus, cpu_get_de(cpu), cpu.a)
+		cpu_bus_write_byte(bus, cpu_get_de(cpu), cpu.a)
 	case .HLI:
 		address := cpu_get_hl(cpu)
-		bus_write_byte(bus, address, cpu.a)
+		cpu_bus_write_byte(bus, address, cpu.a)
 		cpu_set_r16(cpu, .HL, address + 1)
 	case .HLD:
 		address := cpu_get_hl(cpu)
-		bus_write_byte(bus, address, cpu.a)
+		cpu_bus_write_byte(bus, address, cpu.a)
 		cpu_set_r16(cpu, .HL, address - 1)
 	}
 }
@@ -903,16 +903,16 @@ cpu_ld_r16mem_a :: proc(cpu: ^Cpu, bus: ^Bus, dest: R16_mem) {
 cpu_ld_a_r16mem :: proc(cpu: ^Cpu, bus: ^Bus, dest: R16_mem) {
 	switch dest {
 	case .BC:
-		cpu.a = bus_read_byte(bus, cpu_get_bc(cpu))
+		cpu.a = cpu_bus_read_byte(bus, cpu_get_bc(cpu))
 	case .DE:
-		cpu.a = bus_read_byte(bus, cpu_get_de(cpu))
+		cpu.a = cpu_bus_read_byte(bus, cpu_get_de(cpu))
 	case .HLI:
 		address := cpu_get_hl(cpu)
-		cpu.a = bus_read_byte(bus, address)
+		cpu.a = cpu_bus_read_byte(bus, address)
 		cpu_set_r16(cpu, .HL, address + 1)
 	case .HLD:
 		address := cpu_get_hl(cpu)
-		cpu.a = bus_read_byte(bus, address)
+		cpu.a = cpu_bus_read_byte(bus, address)
 		cpu_set_r16(cpu, .HL, address - 1)
 	}
 }
@@ -1029,10 +1029,10 @@ cpu_cp_a :: proc(cpu: ^Cpu, value: u8) {
 // (The value of SP is 2 larger than before instruction execution.) The next instruction is fetched from
 // the address specified by the content of PC (as usual).
 cpu_pop_u16 :: proc(cpu: ^Cpu, bus: ^Bus) -> u16 {
-	low := u16(bus_read_byte(bus, cpu.sp))
+	low := u16(cpu_bus_read_byte(bus, cpu.sp))
 	cpu.sp += 1
 
-	high := u16(bus_read_byte(bus, cpu.sp))
+	high := u16(cpu_bus_read_byte(bus, cpu.sp))
 	cpu.sp += 1
 
 	return (high << 8) | low
@@ -1040,9 +1040,9 @@ cpu_pop_u16 :: proc(cpu: ^Cpu, bus: ^Bus) -> u16 {
 
 cpu_push_u16 :: proc(cpu: ^Cpu, bus: ^Bus, value: u16) {
 	cpu.sp -= 1
-	bus_write_byte(bus, cpu.sp, u8(value >> 8))
+	cpu_bus_write_byte(bus, cpu.sp, u8(value >> 8))
 	cpu.sp -= 1
-	bus_write_byte(bus, cpu.sp, u8(value))
+	cpu_bus_write_byte(bus, cpu.sp, u8(value))
 }
 
 cpu_condition_met :: proc(cpu: ^Cpu, condition: u8) -> bool {

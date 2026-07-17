@@ -91,7 +91,6 @@ PPU_mode :: enum u8 {
 	DRAWING = 3,
 }
 
-
 Timer_Registers :: struct {
 	system_counter: u16,
 	tima:           u8,
@@ -120,6 +119,7 @@ Bus :: struct {
 	ie:         u8,
 	timer_regs: Timer_Registers,
 	ppu:        PPU,
+	dma:        DMA,
 }
 
 Bus_init :: proc(rom: []u8, header: ^ROM_Header, allocator := context.allocator) -> (Bus, bool) {
@@ -135,7 +135,37 @@ Bus_destroy :: proc(bus: ^Bus, allocator := context.allocator) {
 	Cartridge_destroy(&bus.cartridge, allocator)
 }
 
+// CPU Bus Accessor (CPU restrictions)
+cpu_bus_read_byte :: proc(bus: ^Bus, address: u16) -> u8 {
+	if bus.dma.locked && !bus_address_is_hram(address) {
+		// During DMA, the CPU cannot read real ROM/RAM values
+		return bus.dma.current_value
+	}
+
+	return bus_read_byte(bus, address)
+}
+
+// Internal Accessor (no restrictions)
 bus_read_byte :: proc(bus: ^Bus, address: u16) -> u8 {
+	return bus_read_byte_internal(bus, address)
+}
+
+// CPU Bus Writer (CPU restrictions)
+cpu_bus_write_byte :: proc(bus: ^Bus, address: u16, value: u8) {
+	if bus.dma.locked && !bus_address_is_hram(address) && address != DMA_ADDRESS {
+		// During DMA, the CPU cannot write to ROM/RAM
+		return
+	}
+
+	bus_write_byte_internal(bus, address, value)
+}
+
+// Internal Writer (no restrictions)
+bus_write_byte :: proc(bus: ^Bus, address: u16, value: u8) {
+	bus_write_byte_internal(bus, address, value)
+}
+
+bus_read_byte_internal :: proc(bus: ^Bus, address: u16) -> u8 {
 	switch address {
 	case ROM_START ..= ROM_END:
 		return cartridge_read(&bus.cartridge, address)
@@ -186,6 +216,8 @@ bus_read_byte :: proc(bus: ^Bus, address: u16) -> u8 {
 		return bus.ppu.wy
 	case WX_ADDRESS:
 		return bus.ppu.wx
+	case DMA_ADDRESS:
+		return bus.dma.reg
 	case IO_START ..= IO_END:
 		return bus.io[address - IO_START]
 	case HRAM_START ..= HRAM_END:
@@ -197,7 +229,7 @@ bus_read_byte :: proc(bus: ^Bus, address: u16) -> u8 {
 	unreachable()
 }
 
-bus_write_byte :: proc(bus: ^Bus, address: u16, value: u8) {
+bus_write_byte_internal :: proc(bus: ^Bus, address: u16, value: u8) {
 	switch address {
 	case ROM_START ..= ROM_END:
 		cartridge_write(&bus.cartridge, address, value)
@@ -249,6 +281,8 @@ bus_write_byte :: proc(bus: ^Bus, address: u16, value: u8) {
 		bus.ppu.wy = value
 	case WX_ADDRESS:
 		bus.ppu.wx = value
+	case DMA_ADDRESS:
+		dma_write(bus, value)
 	case IO_START ..= IO_END:
 		bus.io[address - IO_START] = value
 	case HRAM_START ..= HRAM_END:
@@ -258,9 +292,14 @@ bus_write_byte :: proc(bus: ^Bus, address: u16, value: u8) {
 	}
 }
 
-bus_write_u16 :: proc(bus: ^Bus, address: u16, value: u16) {
-	bus_write_byte(bus, address, u8(value)) // u8 cast is lower byte
-	bus_write_byte(bus, address + 1, u8(value >> 8))
+// Bypases DMA restrictions to access DMA byte
+bus_read_byte_dma :: proc(bus: ^Bus, address: u16) -> u8 {
+	return bus_read_byte_internal(bus, address)
+}
+
+cpu_bus_write_u16 :: proc(bus: ^Bus, address: u16, value: u16) {
+	cpu_bus_write_byte(bus, address, u8(value)) // u8 cast is lower byte
+	cpu_bus_write_byte(bus, address + 1, u8(value >> 8)) // Move upper byte to lower (and as above)
 }
 
 bus_read_u16_le :: proc(bus: ^Bus, address: u16) -> u16 {
@@ -268,4 +307,8 @@ bus_read_u16_le :: proc(bus: ^Bus, address: u16) -> u16 {
 	high := u16(bus_read_byte(bus, address + 1))
 
 	return low | high << 8
+}
+
+bus_address_is_hram :: proc(address: u16) -> bool {
+	return address >= HRAM_START && address <= HRAM_END
 }

@@ -717,3 +717,50 @@ test_machine_tick_advances_ppu_once_per_t_cycle :: proc(t: ^testing.T) {
 		"Expected STAT mode to follow machine time",
 	)
 }
+
+// --- OAM DMA clock integration tests ---
+
+@(test)
+test_machine_tick_advances_dma_once_per_t_cycle :: proc(t: ^testing.T) {
+	machine := make_test_machine([]u8{0x00})
+	for index in 0 ..< 0xA0 {
+		gb.bus_write_byte(&machine.bus, 0xC000 + u16(index), u8(index + 1))
+	}
+	gb.bus_write_byte(&machine.bus, 0xFF46, 0xC0)
+
+	gb.machine_tick(&machine, 161)
+
+	testing.expect(
+		t,
+		!machine.bus.dma.active,
+		"Expected one startup cycle and 160 copy cycles to complete OAM DMA",
+	)
+	testing.expect(
+		t,
+		machine.bus.oam[0] == 1 && machine.bus.oam[0x9F] == 0xA0,
+		"Expected machine time to copy the first and last OAM bytes",
+	)
+}
+
+@(test)
+test_machine_dma_uses_instruction_at_once_timing :: proc(t: ^testing.T) {
+	machine := make_test_machine([]u8{0xE0, 0x46}) // LDH [$FF46], A
+	machine.cpu.a = 0xC0
+	gb.bus_write_byte(&machine.bus, 0xC000, 0x5A)
+
+	ok := gb.Machine_step(&machine)
+
+	testing.expect(t, ok, "Expected the DMA-triggering instruction to succeed")
+	testing.expect(t, machine.bus.dma.active, "Expected the instruction to request OAM DMA")
+	testing.expect(
+		t,
+		machine.bus.dma.byte_index == 2,
+		"Expected bulk instruction timing to advance DMA for all three LDH M-cycles",
+	)
+	testing.expect(
+		t,
+		machine.bus.oam[0] == 0x5A && machine.bus.oam[1] == 0,
+		"Expected the first two DMA bytes to be copied during bulk instruction timing",
+	)
+	testing.expect(t, machine.bus.dma.locked, "Expected DMA to lock the CPU bus after startup")
+}
