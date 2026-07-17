@@ -68,15 +68,31 @@ ppu_tick :: proc(bus: ^Bus) {
 	ppu_update_stat_interrupt_line(bus)
 }
 
+sprite :: struct {
+	oam_index: int,
+	x:         int,
+	y:         int,
+	tile:      u8,
+	attrs:     u8,
+}
+
 ppu_render_scanline :: proc(bus: ^Bus) {
 	ppu := &bus.ppu
 	line_start := int(ppu.ly) * SCREEN_WIDTH
+	sprites: [10]sprite
+	sprite_count := 0
 
+	// obj (sprite) enabled flag
+	if ppu.lcdc & (1 << 1) != 0 {
+		sprite_count = ppu_select_scanline_sprites(bus, &sprites)
+	}
 
 	for screen_x in 0 ..< SCREEN_WIDTH {
 		// We default to 'empty' pixels
 		bg_color := u8(0)
 		final_shade := u8(0)
+
+		// --- Rendering background ---
 
 		// bg/win enabled flag
 		if ppu.lcdc & 1 != 0 {
@@ -86,9 +102,205 @@ ppu_render_scanline :: proc(bus: ^Bus) {
 			final_shade = (ppu.bgp >> (bg_color * 2)) & 0b11
 		}
 
+		// --- Rendering sprites ---
+
+		// obj (sprite) enabled flag
+		if ppu.lcdc & (1 << 1) != 0 {
+			sprite_shade, visible := ppu_resolve_sprite_pixel(
+				bus,
+				sprites[:sprite_count],
+				screen_x,
+				bg_color,
+			)
+
+			if visible {
+				// BG shade is overriden if sprite visible
+				final_shade = sprite_shade
+			}
+		}
+
 		// Setting the scanlines pixel the final shade
 		ppu.frame_buffer[line_start + screen_x] = final_shade
 	}
+}
+
+// https://github.com/Ashiepaws/GBEDG/blob/master/ppu/index.md#oam-scan-mode-2
+//
+// Note: Pan Doc suggests sprites with X/X>=168 are hidden but still consume the 10 sprite limit
+// Selection logic below uses Pan Doc impl
+ppu_select_scanline_sprites :: proc(bus: ^Bus, sprites: ^[10]sprite) -> int {
+	ppu := &bus.ppu
+
+	sprite_height := 8
+	// OBJ size flag (0=8x8; 1=8x16)
+	if ppu.lcdc & (1 << 2) != 0 {
+		sprite_height = 16
+	}
+
+	count := 0
+
+	// Can display up to 40 moveable OBJs
+	for oam_index in 0 ..< 40 {
+		// Each OAM sprite is 4 bytes
+		// So each sprite is found at byte 0, 4, 8, 12 etc...
+		offset := oam_index * 4
+
+		// Byte 0: Y
+		// Y is an OBJ's vertical position on the screen + 16
+		// https://gbdev.io/pandocs/OAM.html#byte-0--y-position
+		// Y=0 hides an object for eg
+		// Y=2 hides an 8x8 obj, but displays the last 2 rows of an 8x16 obj
+		y := int(bus.oam[offset]) - 16
+		// Byte 1: X
+		// https://gbdev.io/pandocs/OAM.html#byte-1--x-position
+		// X is similar but offset by 8
+		x := int(bus.oam[offset + 1]) - 8
+
+		if int(ppu.ly) < y || int(ppu.ly) >= y + sprite_height {
+			// Current scanline is above the top edge or,
+			// Current scanline is at or below the sprites bottom edge
+			// in both cases - we don't need to render since not visible
+			continue
+		}
+
+		sprites[count] = sprite {
+			oam_index = oam_index,
+			x         = x,
+			y         = y,
+			// Byte 2: Tile Index
+			// https://gbdev.io/pandocs/OAM.html#byte-2--tile-index
+			tile      = bus.oam[offset + 2],
+			// Byte 3: Attribute / Flags
+			// https://gbdev.io/pandocs/OAM.html#byte-3--attributesflags
+			attrs     = bus.oam[offset + 3],
+		}
+
+		count += 1
+
+		if count == 10 {
+			// Can only render 10 per scanline
+			break
+		}
+	}
+
+	return count
+}
+
+ppu_resolve_sprite_pixel :: proc(
+	bus: ^Bus,
+	sprites: []sprite,
+	screen_x: int,
+	bg_color: u8,
+) -> (
+	shade: u8,
+	visible: bool,
+) {
+	ppu := &bus.ppu
+
+	// OBJ size flag (0=8x8; 1=8x16)
+	sprite_height := 8
+	if ppu.lcdc & (1 << 2) != 0 {
+		sprite_height = 16
+	}
+
+	best_sprite_found := false
+	best_sprite_x := 0
+	best_oam_index := 0
+	best_colour := u8(0)
+	best_attributes := u8(0)
+
+	for current_sprite in sprites {
+		// Pixel not within sprite so nothing to render
+		if screen_x < current_sprite.x || screen_x >= current_sprite.x + 8 {
+			continue
+		}
+
+		// Pulling the coords of sprite that corresponds with currently scanline pixel
+		sprite_pixel_x := screen_x - current_sprite.x
+		sprite_pixel_y := int(ppu.ly) - current_sprite.y
+
+		// https://gbdev.io/pandocs/OAM.html#byte-3--attributesflags
+		// The 5 and 6 bit in sprite attribs require flippy the sprite
+		// X flip
+		if current_sprite.attrs & (1 << 5) != 0 {
+			sprite_pixel_x = 7 - sprite_pixel_x
+		}
+		// Y Flip
+		if current_sprite.attrs & (1 << 6) != 0 {
+			sprite_pixel_y = sprite_height - 1 - sprite_pixel_y
+		}
+
+		tile_number := current_sprite.tile
+
+		// In 8x16 mode, bit 0 of the tile number is ignored
+		// The even tile is the top half and the odd tile is the bottom half
+		if sprite_height == 16 {
+			tile_number &= 0xFE
+
+			if sprite_pixel_y >= 8 {
+				tile_number += 1
+				sprite_pixel_y -= 8
+			}
+		}
+
+		// Sprite tiles always use the unsigned TILE_DATA_1 (0x8000) tile region
+		tile_address := TILE_DATA_1 + u16(tile_number) * 16
+		row_address := tile_address + u16(sprite_pixel_y) * 2
+
+		low_byte := bus_read_byte(bus, row_address)
+		high_byte := bus_read_byte(bus, row_address + 1)
+
+		bit_index := u8(7 - sprite_pixel_x)
+
+		low_bit := (low_byte >> bit_index) & 1
+		high_bit := (high_byte >> bit_index) & 1
+
+		colour := (high_bit << 1) | low_bit
+
+		// sprite colour 0 is transparent
+		if colour == 0 {
+			continue
+		}
+
+		// DMG sprite priority:
+		// 1. Lower X position wins
+		// 2. If X matches, lower OAM index wins
+		if best_sprite_found {
+			if current_sprite.x > best_sprite_x {
+				continue
+			}
+
+			if current_sprite.x == best_sprite_x && current_sprite.oam_index > best_oam_index {
+				continue
+			}
+		}
+
+		best_sprite_found = true
+		best_sprite_x = current_sprite.x
+		best_oam_index = current_sprite.oam_index
+		best_colour = colour
+		best_attributes = current_sprite.attrs
+	}
+
+	if !best_sprite_found {
+		return 0, false
+	}
+
+	// Attribute bit 7 means the sprite is behind non-zero BG/window pixels
+	behind_background := best_attributes & (1 << 7) != 0
+
+	if behind_background && bg_color != 0 {
+		return 0, false
+	}
+
+	// Attribute bit 4 selects OBP0 or OBP1
+	palette := ppu.obp0
+	if best_attributes & (1 << 4) != 0 {
+		palette = ppu.obp1
+	}
+
+	shade = (palette >> (best_colour * 2)) & 0b11
+	return shade, true
 }
 
 resolve_bg_win_color :: proc(bus: ^Bus, screen_x: int) -> u8 {
@@ -126,7 +338,7 @@ resolve_bg_win_color :: proc(bus: ^Bus, screen_x: int) -> u8 {
 		// is off from the left & top
 		//
 		// Since the background is 256x256 (can be represented by u8) and the
-		// viewport is a slice of this background for any given  position (screen_x, ppu.ly)
+		// viewport is a slice of this background (160 x 144) for any given  position (screen_x, ppu.ly)
 		// we need to know what that background pixel is
 		//
 		// Backgrounds are made up of various 8x8 tiles, so given some background_x/y value

@@ -533,3 +533,310 @@ test_ppu_window_enable_and_offscreen_wx :: proc(t: ^testing.T) {
 		"Expected WX=167 to keep the Window beyond the right edge",
 	)
 }
+
+// --- PPU sprite rendering tests ---
+
+ppu_write_test_sprite :: proc(
+	bus: ^gb.Bus,
+	oam_index: int,
+	screen_x: int,
+	screen_y: int,
+	tile_number: u8,
+	attributes: u8,
+) {
+	offset := oam_index * 4
+	bus.oam[offset] = u8(screen_y + 16)
+	bus.oam[offset + 1] = u8(screen_x + 8)
+	bus.oam[offset + 2] = tile_number
+	bus.oam[offset + 3] = attributes
+}
+
+ppu_write_test_tile_row :: proc(
+	bus: ^gb.Bus,
+	tile_number: u8,
+	row: int,
+	low_byte: u8,
+	high_byte: u8,
+) {
+	address := u16(0x8000) + u16(tile_number) * 16 + u16(row * 2)
+	gb.bus_write_byte(bus, address, low_byte)
+	gb.bus_write_byte(bus, address + 1, high_byte)
+}
+
+@(test)
+test_ppu_renders_sprite_pixels_through_obp0_and_skips_colour_zero :: proc(t: ^testing.T) {
+	bus := make_test_bus([]u8{})
+	gb.bus_write_byte(&bus, 0xFF40, 0x92) // LCD and OBJ on; BG off.
+	gb.bus_write_byte(&bus, 0xFF48, 0xE4)
+	ppu_write_test_sprite(&bus, 0, 4, 0, 1, 0)
+	ppu_write_test_tile_row(&bus, 1, 0, 0x55, 0x33)
+
+	ppu_tick_many(&bus, 252)
+
+	expected := [8]u8{0, 1, 2, 3, 0, 1, 2, 3}
+	for shade, sprite_x in expected {
+		screen_x := 4 + sprite_x
+		testing.expectf(
+			t,
+			bus.ppu.frame_buffer[screen_x] == shade,
+			"Expected sprite pixel %d to have shade %d",
+			sprite_x,
+			shade,
+		)
+	}
+	testing.expect(
+		t,
+		bus.ppu.frame_buffer[3] == 0,
+		"Expected the pixel left of the OBJ to remain blank",
+	)
+	testing.expect(
+		t,
+		bus.ppu.frame_buffer[gb.SCREEN_WIDTH + 4] == 0,
+		"Expected rendering scanline 0 not to modify scanline 1",
+	)
+}
+
+@(test)
+test_ppu_obj_enable_and_palette_attribute_control_sprite_output :: proc(t: ^testing.T) {
+	disabled_bus := make_test_bus([]u8{})
+	gb.bus_write_byte(&disabled_bus, 0xFF40, 0x90) // LCD on; OBJ off.
+	gb.bus_write_byte(&disabled_bus, 0xFF48, 0x0C) // OBP0 maps colour 1 to shade 3.
+	ppu_write_test_sprite(&disabled_bus, 0, 0, 0, 1, 0)
+	ppu_write_solid_test_tile(&disabled_bus, 1, 1)
+	ppu_tick_many(&disabled_bus, 252)
+	testing.expect(
+		t,
+		disabled_bus.ppu.frame_buffer[0] == 0,
+		"Expected a disabled OBJ layer not to render a sprite",
+	)
+
+	enabled_bus := make_test_bus([]u8{})
+	gb.bus_write_byte(&enabled_bus, 0xFF40, 0x92)
+	gb.bus_write_byte(&enabled_bus, 0xFF48, 0x0C) // OBP0 maps colour 1 to shade 3.
+	gb.bus_write_byte(&enabled_bus, 0xFF49, 0x08) // OBP1 maps colour 1 to shade 2.
+	ppu_write_test_sprite(&enabled_bus, 0, 0, 0, 1, 0)
+	ppu_write_test_sprite(&enabled_bus, 1, 8, 0, 1, 1 << 4)
+	ppu_write_solid_test_tile(&enabled_bus, 1, 1)
+	ppu_tick_many(&enabled_bus, 252)
+	testing.expect(
+		t,
+		enabled_bus.ppu.frame_buffer[0] == 3,
+		"Expected attribute bit 4 clear to select OBP0",
+	)
+	testing.expect(
+		t,
+		enabled_bus.ppu.frame_buffer[8] == 2,
+		"Expected attribute bit 4 set to select OBP1",
+	)
+}
+
+@(test)
+test_ppu_sprite_x_and_y_flip_mirror_tile_pixels :: proc(t: ^testing.T) {
+	bus := make_test_bus([]u8{})
+	gb.bus_write_byte(&bus, 0xFF40, 0x92)
+	gb.bus_write_byte(&bus, 0xFF48, 0xE4)
+	ppu_write_test_sprite(&bus, 0, 0, 0, 1, (1 << 6) | (1 << 5))
+	// The bottom-right source pixel is colour 2 and should move to the top-left.
+	ppu_write_test_tile_row(&bus, 1, 7, 0x00, 0x01)
+
+	ppu_tick_many(&bus, 252)
+
+	testing.expect(
+		t,
+		bus.ppu.frame_buffer[0] == 2,
+		"Expected X/Y flip to mirror the bottom-right pixel to top-left",
+	)
+	testing.expect(
+		t,
+		bus.ppu.frame_buffer[1] == 0,
+		"Expected the adjacent transparent source pixel to remain transparent",
+	)
+}
+
+@(test)
+test_ppu_8x16_sprite_ignores_tile_bit_zero_and_selects_both_halves :: proc(t: ^testing.T) {
+	bus := make_test_bus([]u8{})
+	gb.bus_write_byte(&bus, 0xFF40, 0x96) // LCD and OBJ on; 8x16 OBJ size.
+	gb.bus_write_byte(&bus, 0xFF48, 0xE4)
+	ppu_write_test_sprite(&bus, 0, 0, 0, 5, 0)
+	ppu_write_test_tile_row(&bus, 4, 0, 0x80, 0x00)
+	ppu_write_test_tile_row(&bus, 5, 7, 0x00, 0x80)
+
+	ppu_tick_many(&bus, 252)
+	testing.expect(
+		t,
+		bus.ppu.frame_buffer[0] == 1,
+		"Expected an odd 8x16 tile number to use the preceding even tile for its top half",
+	)
+
+	ppu_tick_many(&bus, 15 * 456)
+	testing.expect(
+		t,
+		bus.ppu.frame_buffer[15 * gb.SCREEN_WIDTH] == 2,
+		"Expected the bottom scanline of an 8x16 OBJ to use the odd tile's final row",
+	)
+
+	flipped_bus := make_test_bus([]u8{})
+	gb.bus_write_byte(&flipped_bus, 0xFF40, 0x96)
+	gb.bus_write_byte(&flipped_bus, 0xFF48, 0xE4)
+	ppu_write_test_sprite(&flipped_bus, 0, 0, 0, 5, 1 << 6)
+	ppu_write_test_tile_row(&flipped_bus, 5, 7, 0x00, 0x80)
+	ppu_tick_many(&flipped_bus, 252)
+	testing.expect(
+		t,
+		flipped_bus.ppu.frame_buffer[0] == 2,
+		"Expected Y flip to mirror the complete 16-pixel OBJ rather than each tile separately",
+	)
+}
+
+@(test)
+test_ppu_sprite_bg_priority_uses_background_colour_id :: proc(t: ^testing.T) {
+	bus := make_test_bus([]u8{})
+	gb.bus_write_byte(&bus, 0xFF40, 0x93) // LCD, BG, and OBJ on.
+	gb.bus_write_byte(&bus, 0xFF47, 0xE4)
+	gb.bus_write_byte(&bus, 0xFF48, 0xE4)
+	ppu_write_test_sprite(&bus, 0, 0, 0, 1, 1 << 7)
+	ppu_write_solid_test_tile(&bus, 1, 2)
+	// BG x=0 is colour 0; BG x=1 is colour 1.
+	ppu_write_test_tile_row(&bus, 0, 0, 0x40, 0x00)
+
+	ppu_tick_many(&bus, 252)
+
+	testing.expect(
+		t,
+		bus.ppu.frame_buffer[0] == 2,
+		"Expected an OBJ behind the BG to remain visible over BG colour 0",
+	)
+	testing.expect(
+		t,
+		bus.ppu.frame_buffer[1] == 1,
+		"Expected BG colour 1 to cover an OBJ whose priority attribute is set",
+	)
+
+	bg_disabled_bus := make_test_bus([]u8{})
+	gb.bus_write_byte(&bg_disabled_bus, 0xFF40, 0x92)
+	gb.bus_write_byte(&bg_disabled_bus, 0xFF47, 0xFF)
+	gb.bus_write_byte(&bg_disabled_bus, 0xFF48, 0xE4)
+	ppu_write_test_sprite(&bg_disabled_bus, 0, 0, 0, 1, 1 << 7)
+	ppu_write_solid_test_tile(&bg_disabled_bus, 1, 2)
+	ppu_tick_many(&bg_disabled_bus, 252)
+	testing.expect(
+		t,
+		bg_disabled_bus.ppu.frame_buffer[0] == 2,
+		"Expected LCDC.0 clear to blank the BG without hiding a behind-BG OBJ",
+	)
+}
+
+@(test)
+test_ppu_sprite_overlap_uses_dmg_x_then_oam_priority :: proc(t: ^testing.T) {
+	lower_x_bus := make_test_bus([]u8{})
+	gb.bus_write_byte(&lower_x_bus, 0xFF40, 0x92)
+	gb.bus_write_byte(&lower_x_bus, 0xFF48, 0xE4)
+	ppu_write_test_sprite(&lower_x_bus, 0, 4, 0, 1, 0)
+	ppu_write_test_sprite(&lower_x_bus, 1, 3, 0, 2, 0)
+	ppu_write_solid_test_tile(&lower_x_bus, 1, 1)
+	ppu_write_solid_test_tile(&lower_x_bus, 2, 2)
+	ppu_tick_many(&lower_x_bus, 252)
+	testing.expect(
+		t,
+		lower_x_bus.ppu.frame_buffer[4] == 2,
+		"Expected the OBJ with the lower X coordinate to win despite its later OAM index",
+	)
+
+	equal_x_bus := make_test_bus([]u8{})
+	gb.bus_write_byte(&equal_x_bus, 0xFF40, 0x92)
+	gb.bus_write_byte(&equal_x_bus, 0xFF48, 0xE4)
+	ppu_write_test_sprite(&equal_x_bus, 0, 4, 0, 1, 0)
+	ppu_write_test_sprite(&equal_x_bus, 1, 4, 0, 2, 0)
+	ppu_write_solid_test_tile(&equal_x_bus, 1, 1)
+	ppu_write_solid_test_tile(&equal_x_bus, 2, 2)
+	ppu_tick_many(&equal_x_bus, 252)
+	testing.expect(
+		t,
+		equal_x_bus.ppu.frame_buffer[4] == 1,
+		"Expected the earlier OAM entry to win when overlapping OBJs have equal X",
+	)
+}
+
+@(test)
+test_ppu_transparent_and_bg_hidden_obj_pixels_do_not_reorder_sprites :: proc(t: ^testing.T) {
+	transparent_bus := make_test_bus([]u8{})
+	gb.bus_write_byte(&transparent_bus, 0xFF40, 0x92)
+	gb.bus_write_byte(&transparent_bus, 0xFF48, 0xE4)
+	ppu_write_test_sprite(&transparent_bus, 0, 0, 0, 1, 0)
+	ppu_write_test_sprite(&transparent_bus, 1, 0, 0, 2, 0)
+	ppu_write_test_tile_row(&transparent_bus, 2, 0, 0x80, 0x00)
+	ppu_tick_many(&transparent_bus, 252)
+	testing.expect(
+		t,
+		transparent_bus.ppu.frame_buffer[0] == 1,
+		"Expected a lower-priority opaque OBJ pixel through a transparent higher-priority pixel",
+	)
+
+	masked_bus := make_test_bus([]u8{})
+	gb.bus_write_byte(&masked_bus, 0xFF40, 0x93)
+	gb.bus_write_byte(&masked_bus, 0xFF47, 0xE4)
+	gb.bus_write_byte(&masked_bus, 0xFF48, 0xE4)
+	ppu_write_test_sprite(&masked_bus, 0, 0, 0, 1, 1 << 7)
+	ppu_write_test_sprite(&masked_bus, 1, 0, 0, 2, 0)
+	ppu_write_solid_test_tile(&masked_bus, 0, 3)
+	ppu_write_solid_test_tile(&masked_bus, 1, 1)
+	ppu_write_solid_test_tile(&masked_bus, 2, 2)
+	ppu_tick_many(&masked_bus, 252)
+	testing.expect(
+		t,
+		masked_bus.ppu.frame_buffer[0] == 3,
+		"Expected a BG-hidden higher-priority OBJ to mask a lower-priority OBJ",
+	)
+}
+
+@(test)
+test_ppu_scanline_sprite_limit_counts_horizontally_hidden_objects :: proc(t: ^testing.T) {
+	limited_bus := make_test_bus([]u8{})
+	gb.bus_write_byte(&limited_bus, 0xFF40, 0x92)
+	gb.bus_write_byte(&limited_bus, 0xFF48, 0xE4)
+	for oam_index in 0 ..< 10 {
+		ppu_write_test_sprite(&limited_bus, oam_index, -8, 0, 1, 0)
+	}
+	ppu_write_test_sprite(&limited_bus, 10, 0, 0, 1, 0)
+	ppu_write_solid_test_tile(&limited_bus, 1, 1)
+	ppu_tick_many(&limited_bus, 252)
+	testing.expect(
+		t,
+		limited_bus.ppu.frame_buffer[0] == 0,
+		"Expected ten X-hidden OBJs to consume the scanline limit before OAM entry 10",
+	)
+
+	within_limit_bus := make_test_bus([]u8{})
+	gb.bus_write_byte(&within_limit_bus, 0xFF40, 0x92)
+	gb.bus_write_byte(&within_limit_bus, 0xFF48, 0xE4)
+	for oam_index in 0 ..< 9 {
+		ppu_write_test_sprite(&within_limit_bus, oam_index, -8, 0, 1, 0)
+	}
+	ppu_write_test_sprite(&within_limit_bus, 9, 0, 0, 1, 0)
+	ppu_write_solid_test_tile(&within_limit_bus, 1, 1)
+	ppu_tick_many(&within_limit_bus, 252)
+	testing.expect(
+		t,
+		within_limit_bus.ppu.frame_buffer[0] == 1,
+		"Expected the tenth selected OBJ to remain visible",
+	)
+}
+
+@(test)
+test_ppu_renders_visible_portion_of_sprite_above_and_left_of_screen :: proc(t: ^testing.T) {
+	bus := make_test_bus([]u8{})
+	gb.bus_write_byte(&bus, 0xFF40, 0x92)
+	gb.bus_write_byte(&bus, 0xFF48, 0xE4)
+	ppu_write_test_sprite(&bus, 0, -4, -2, 1, 0)
+	// At screen (0, 0), the partially hidden OBJ contributes source pixel (4, 2).
+	ppu_write_test_tile_row(&bus, 1, 2, 0x08, 0x00)
+
+	ppu_tick_many(&bus, 252)
+
+	testing.expect(
+		t,
+		bus.ppu.frame_buffer[0] == 1,
+		"Expected the visible portion of an OBJ above and left of the screen to render",
+	)
+}

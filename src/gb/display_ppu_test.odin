@@ -5,8 +5,10 @@ import "core:os"
 
 dump_ppu_test_frame :: proc() {
 	bus := Bus{}
-	bus_write_byte(&bus, LCDC_ADDRESS, 0xF1) // LCD, BG, and Window on; Window uses 9C00.
+	bus_write_byte(&bus, LCDC_ADDRESS, 0xF3) // LCD, BG, Window, and OBJ on; Window uses 9C00.
 	bus_write_byte(&bus, BGP_ADDRESS, 0xE4)
+	bus_write_byte(&bus, OBP0_ADDRESS, 0xE4)
+	bus_write_byte(&bus, OBP1_ADDRESS, 0xAC)
 	bus_write_byte(&bus, WY_ADDRESS, 24)
 	bus_write_byte(&bus, WX_ADDRESS, 39) // Window begins at screen x=32.
 
@@ -44,6 +46,46 @@ dump_ppu_test_frame :: proc() {
 			bus_write_byte(&bus, address, low_byte)
 			bus_write_byte(&bus, address + 1, high_byte)
 		}
+	}
+
+	// Tile 4 is a face, and tile 5 is asymmetric so X flip is visible.
+	sprite_tile_low := [2][8]u8 {
+		{0x3C, 0x42, 0xA5, 0x81, 0xA5, 0x99, 0x42, 0x3C},
+		{0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00},
+	}
+	sprite_tile_high := [2][8]u8 {
+		{0x3C, 0x42, 0xA5, 0x81, 0xA5, 0x99, 0x42, 0x3C},
+		{0x10, 0x18, 0xFC, 0xFE, 0xFC, 0x18, 0x10, 0x00},
+	}
+	for tile_rows, tile_index in sprite_tile_low {
+		for low_byte, row in tile_rows {
+			address := u16(0x8000 + (tile_index + 4) * 16 + row * 2)
+			bus_write_byte(&bus, address, low_byte)
+			bus_write_byte(&bus, address + 1, sprite_tile_high[tile_index][row])
+		}
+	}
+
+	// OAM stores screen Y + 16, screen X + 8, tile number, then attributes.
+	sprite_oam := [?]u8 {
+		32 + 16,
+		48 + 8,
+		4,
+		0,
+		32 + 16,
+		64 + 8,
+		4,
+		1 << 4, // Use OBP1.
+		48 + 16,
+		48 + 8,
+		5,
+		0,
+		48 + 16,
+		64 + 8,
+		5,
+		1 << 5, // X flip.
+	}
+	for value, offset in sprite_oam {
+		bus_write_byte(&bus, OAM_START + u16(offset), value)
 	}
 
 	for _ in 0 ..< TOTAL_SCANLINES * END_OF_SCANLINE_D {
